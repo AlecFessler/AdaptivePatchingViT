@@ -124,7 +124,3 @@ This project is licensed under the MIT License. See the [LICENSE](LICENSE) file 
 # MIT License
 
 # See LICENSE file in the project root for full license information.
-
----
-
-**Note**: The placeholder values in the Results section should be replaced with the actual results obtained from your experiments. Additionally, include the training loss plots and any other relevant figures to support your findings.
