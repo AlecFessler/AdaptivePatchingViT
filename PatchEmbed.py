@@ -1,9 +1,17 @@
+# © 2024 Alec Fessler
+# MIT License
+# See LICENSE file in the project root for full license information.
+
 import torch.nn as nn
 
 class PatchEmbed(nn.Module):
-    """Image to Patch Embedding"""
-
-    def __init__(self, img_size=224, patch_size=16, in_chans=3, embed_dim=768):
+    def __init__(
+        self,
+        img_size=224,
+        patch_size=16,
+        in_chans=3,
+        embed_dim=768
+    ):
         super().__init__()
         self.img_size = img_size
         self.patch_size = patch_size
@@ -17,8 +25,7 @@ class PatchEmbed(nn.Module):
         )
 
     def forward(self, x):
-        # x: [batch_size, channels, height, width]
-        x = self.proj(x)  # [batch_size, embed_dim, H', W']
-        x = x.flatten(2)  # [batch_size, embed_dim, num_patches]
-        x = x.transpose(1, 2)  # [batch_size, num_patches, embed_dim]
+        x = self.proj(x)
+        x = x.flatten(2)
+        x = x.transpose(1, 2)
         return x

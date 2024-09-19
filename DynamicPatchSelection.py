@@ -12,7 +12,6 @@ import torchvision.utils as vutils
 from ConvBlock import ConvBlock
 from ConvSelfAttn import ConvSelfAttn
 from save_patch_grid import save_patch_grid
-from draw_bounding_boxes import draw_bounding_boxes
 
 class DynamicPatchSelection(nn.Module):
     """
@@ -147,12 +146,6 @@ class DynamicPatchSelection(nn.Module):
                 save_params,
                 "saved_data/patches_" + self.save_path + ".png",
             )
-            #draw_bounding_boxes(
-            #    image_tensor,
-            #    save_params,
-            #    "saved_data/image_" + self.save_path + ".png",
-            #    self.patch_size
-            #)
             resize_transform = transforms.Resize((512, 512))
             image_tensor = resize_transform(image_tensor)
             vutils.save_image(

@@ -1,34 +1,22 @@
+# © 2024 Alec Fessler
+# MIT License
+# See LICENSE file in the project root for full license information.
+
 import torch
 import torch.nn as nn
 import torchvision
 import torchvision.transforms as transforms
-from torchvision.transforms import AutoAugment, AutoAugmentPolicy
 from torch.utils.data import DataLoader
 from torch.amp.grad_scaler import GradScaler
 from torch.amp.autocast_mode import autocast
 from torch.optim.lr_scheduler import CosineAnnealingWarmRestarts, LambdaLR
 from tqdm import tqdm
 from PatchEmbed import PatchEmbed
-from DynamicPatchSelection import DynamicPatchSelection
 from SelfAttn import SelfAttn
 
 class CIFAR10Model(nn.Module):
     def __init__(self):
         super(CIFAR10Model, self).__init__()
-
-        self.dynamic_patch = DynamicPatchSelection(
-            in_channels=3,
-            hidden_channels=32,
-            channel_height=32,
-            channel_width=32,
-            attn_embed_dim=256,
-            attn_heads=4,
-            pos_embed_dim=32,
-            total_patches=24,
-            patch_size=6,
-            dropout=0.1
-        )
-        self.embedding_layer = nn.Linear(3*6*6, 256)
 
         self.patch_embed = PatchEmbed(
             img_size=32,
@@ -75,9 +63,6 @@ class CIFAR10Model(nn.Module):
         self.fc = nn.Linear(256 + 32, 10)
 
     def forward(self, x):
-        # x, pos_embeds = self.dynamic_patch(x)
-        # x = self.embedding_layer(x)
-        # x = torch.cat((x, pos_embeds), dim=-1)
         x = self.patch_embed(x)
         x = x + self.pos_embeds
         cls_tokens = self.cls_token.expand(x.size(0), -1, -1)
@@ -160,7 +145,6 @@ def main():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     transform = transforms.Compose([
-        #AutoAugment(policy=AutoAugmentPolicy.CIFAR10),
         transforms.RandomCrop(32, padding=4),
         transforms.RandomHorizontalFlip(),
         transforms.RandomRotation(15),
@@ -251,7 +235,7 @@ def main():
             best_accuracy = accuracy
             best_weights = {k: v.cpu() for k, v in model.state_dict().items()}
 
-    torch.save(best_weights, "cifar10.pth")
+    torch.save(best_weights, "std_vit_cifar10.pth")
 
 if __name__ == "__main__":
     main()
