@@ -1,3 +1,5 @@
 data
 saved_data
 __pycache__
+dps_vit_test_loss.txt
+std_vit_test_loss.txt
