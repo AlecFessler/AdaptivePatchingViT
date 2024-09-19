@@ -11,146 +11,23 @@ from torch.amp.grad_scaler import GradScaler
 from torch.amp.autocast_mode import autocast
 from torch.optim.lr_scheduler import CosineAnnealingWarmRestarts, LambdaLR
 from tqdm import tqdm
-from modules.DynamicPatchSelection import DynamicPatchSelection
-from modules.SelfAttn import SelfAttn
+import yaml
+from modules.DpsViT import DpsViT
 
-class CIFAR10Model(nn.Module):
+class DpsViTCifar10(nn.Module):
     def __init__(self):
-        super(CIFAR10Model, self).__init__()
-
-        self.dynamic_patch = DynamicPatchSelection(
-            in_channels=3,
-            hidden_channels=32,
-            channel_height=32,
-            channel_width=32,
-            attn_embed_dim=256,
-            attn_heads=4,
-            pos_embed_dim=32,
-            total_patches=16,
-            patch_size=8,
-            dropout=0
-        )
-        self.embedding_layer = nn.Linear(3*8*8, 256)
-
-        self.cls_token = nn.Parameter(torch.randn(1, 1, 256 + 32))
-
-        self.transformer1 = SelfAttn(
-            embed_dim=256 + 32,
-            num_heads=4,
-            dropout=0.1
-        )
-        self.transformer2 = SelfAttn(
-            embed_dim=256 + 32,
-            num_heads=4,
-            dropout=0.1
-        )
-        self.transformer3 = SelfAttn(
-            embed_dim=256 + 32,
-            num_heads=4,
-            dropout=0.1
-        )
-        self.transformer4 = SelfAttn(
-            embed_dim=256 + 32,
-            num_heads=4,
-            dropout=0.1
-        )
-        self.transformer5 = SelfAttn(
-            embed_dim=256 + 32,
-            num_heads=4,
-            dropout=0.1
-        )
-        self.transformer6 = SelfAttn(
-            embed_dim=256 + 32,
-            num_heads=4,
-            dropout=0.1
-        )
-
-        self.norm = nn.LayerNorm(256 + 32)
-        self.fc = nn.Linear(256 + 32, 10)
+        super(DpsViTCifar10, self).__init__()
+        self.vit = DpsViT()
 
     def forward(self, x):
-        x, pos_embeds = self.dynamic_patch(x)
-        x = self.embedding_layer(x)
-        x = torch.cat((x, pos_embeds), dim=-1)
-        cls_tokens = self.cls_token.expand(x.size(0), -1, -1)
-        x = torch.cat((cls_tokens, x), dim=1)
-        x = x.permute(1, 0, 2).contiguous()
-        x = self.transformer1(x)
-        x = self.transformer2(x)
-        x = self.transformer3(x)
-        x = self.transformer4(x)
-        x = self.transformer5(x)
-        x = self.transformer6(x)
-        x = x[0]
-        x = self.norm(x)
-        x = self.fc(x)
-        return x
+        return self.vit(x)
 
-def evaluate(
-        model,
-        test_loader,
-        criterion,
-        device
-    ):
-    model.eval()
-    running_loss = 0.0
-    correct = 0
-    total = 0
-    saved_image = False
+def load_config(config_file):
+    with open(config_file, "r") as file:
+        config = yaml.safe_load(file)
+    return config
 
-    with torch.no_grad():
-        for inputs, labels in test_loader:
-            inputs, labels = inputs.to(device), labels.to(device)
-            outputs = model(inputs)
-            loss = criterion(outputs, labels)
-            running_loss += loss.item()
-            _, predicted = outputs.max(1)
-            total += labels.size(0)
-            correct += predicted.eq(labels).sum().item()
-
-            if not saved_image:
-                model.dynamic_patch.save_data = True
-                saved_image = True
-
-    accuracy = correct / total
-    return running_loss / len(test_loader), accuracy
-
-def train(
-        model,
-        train_loader,
-        criterion,
-        optimizer,
-        scheduler,
-        warmup_scheduler,
-        epoch,
-        device
-    ):
-    scaler = GradScaler()
-    model.train()
-    running_loss = 0.0
-    with tqdm(train_loader, unit="batch") as tepoch:
-        for images, labels in tepoch:
-            images, labels = images.to(device), labels.to(device)
-            optimizer.zero_grad()
-            with autocast(device_type=device.type):
-                outputs = model(images)
-                loss = criterion(outputs, labels)
-            scaler.scale(loss).backward()
-            scaler.step(optimizer)
-            scaler.update()
-            tepoch.set_postfix(loss=loss.item())
-            running_loss += loss.item()
-
-    if epoch < 5:
-        warmup_scheduler.step()
-    else:
-        scheduler.step()
-
-    return running_loss / len(train_loader)
-
-def main():
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
+def get_dataloaders(batch_size, num_workers):
     transform = transforms.Compose([
         transforms.RandomCrop(32, padding=4),
         transforms.RandomHorizontalFlip(),
@@ -178,9 +55,9 @@ def main():
     )
     trainloader = DataLoader(
         trainset,
-        batch_size=128,
+        batch_size=batch_size,
         shuffle=True,
-        num_workers=4
+        num_workers=num_workers
     )
 
     testset = torchvision.datasets.CIFAR10(
@@ -191,28 +68,109 @@ def main():
     )
     testloader = DataLoader(
         testset,
-        batch_size=256,
+        batch_size=batch_size,
         shuffle=False,
-        num_workers=4
+        num_workers=num_workers
     )
 
-    num_epochs = 300
-    model = CIFAR10Model().to(device)
-    criterion = nn.CrossEntropyLoss(label_smoothing=0.1)
+    return trainloader, testloader
+
+def evaluate(
+        model,
+        test_loader,
+        criterion,
+        device
+    ):
+    model.eval()
+    running_loss = 0.0
+    correct = 0
+    total = 0
+
+    with torch.no_grad():
+        for inputs, labels in test_loader:
+            inputs, labels = inputs.to(device), labels.to(device)
+            outputs = model(inputs)
+            loss = criterion(outputs, labels)
+            running_loss += loss.item()
+            _, predicted = outputs.max(1)
+            total += labels.size(0)
+            correct += predicted.eq(labels).sum().item()
+
+    accuracy = correct / total
+    test_loss = running_loss / len(test_loader)
+
+    with open("dps_vit_test_loss.txt", "a") as file:
+        file.write(f"{test_loss}\n")
+
+    return test_loss, accuracy
+
+def train(
+        model,
+        train_loader,
+        criterion,
+        optimizer,
+        scheduler,
+        warmup_scheduler,
+        warmup_epochs,
+        epoch,
+        device
+    ):
+    scaler = GradScaler()
+    model.train()
+    running_loss = 0.0
+    with tqdm(train_loader, unit="batch") as tepoch:
+        for images, labels in tepoch:
+            images, labels = images.to(device), labels.to(device)
+            optimizer.zero_grad()
+            with autocast(device_type=device.type):
+                outputs = model(images)
+                loss = criterion(outputs, labels)
+            scaler.scale(loss).backward()
+            scaler.step(optimizer)
+            scaler.update()
+            tepoch.set_postfix(loss=loss.item())
+            running_loss += loss.item()
+
+    if epoch < warmup_epochs:
+        warmup_scheduler.step()
+    else:
+        scheduler.step()
+
+    return running_loss / len(train_loader)
+
+def main():
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    config = load_config("hparams_config.yaml")
+
+    batch_size = config.get("batch_size", 256)
+    num_workers = config.get("num_workers", 4)
+    learning_rate = config.get("learning_rate", 1e-4)
+    weight_decay = config.get("weight_decay", 1e-3)
+    num_epochs = config.get("num_epochs", 300)
+    t_0 = config.get("T_0", 40)
+    t_mult = config.get("T_mult", 2)
+    eta_min = config.get("eta_min", 0)
+    warmup_epochs = config.get("warmup_epochs", 5)
+    label_smoothing = config.get("label_smoothing", 0.1)
+
+    trainloader, testloader = get_dataloaders(batch_size, num_workers)
+
+    model = DpsViTCifar10().to(device)
+    criterion = nn.CrossEntropyLoss(label_smoothing=label_smoothing)
     optimizer = torch.optim.AdamW(
         model.parameters(),
-        lr=1e-4,
-        weight_decay=1e-3
+        lr=learning_rate,
+        weight_decay=weight_decay
     )
     scheduler = CosineAnnealingWarmRestarts(
         optimizer,
-        T_0=40,
-        T_mult=2,
-        eta_min=0
+        T_0=t_0,
+        T_mult=t_mult,
+        eta_min=eta_min
     )
     warmup_scheduler = LambdaLR(
         optimizer,
-        lr_lambda=lambda epoch: epoch / 5
+        lr_lambda=lambda epoch: epoch / warmup_epochs
     )
 
     best_weights = None
@@ -226,6 +184,7 @@ def main():
             optimizer,
             scheduler,
             warmup_scheduler,
+            warmup_epochs,
             epoch,
             device
         )

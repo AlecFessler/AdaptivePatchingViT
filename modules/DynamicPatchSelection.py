@@ -162,7 +162,7 @@ class DynamicPatchSelection(nn.Module):
             c * self.patch_size * self.patch_size,
         )
 
-        patches = self.dropout(patches)
+        # patches = self.dropout(patches)
 
         pos_embeds = self.pos_embed(translation_params)
 
