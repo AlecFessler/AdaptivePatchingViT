@@ -11,8 +11,8 @@ from torch.amp.grad_scaler import GradScaler
 from torch.amp.autocast_mode import autocast
 from torch.optim.lr_scheduler import CosineAnnealingWarmRestarts, LambdaLR
 from tqdm import tqdm
-from PatchEmbed import PatchEmbed
-from SelfAttn import SelfAttn
+from modules.PatchEmbed import PatchEmbed
+from modules.SelfAttn import SelfAttn
 
 class CIFAR10Model(nn.Module):
     def __init__(self):

@@ -9,9 +9,9 @@ import torch.nn.init as init
 import torchvision.transforms as transforms
 import torchvision.utils as vutils
 
-from ConvBlock import ConvBlock
-from ConvSelfAttn import ConvSelfAttn
-from save_patch_grid import save_patch_grid
+from modules.ConvBlock import ConvBlock
+from modules.ConvSelfAttn import ConvSelfAttn
+from modules.save_patch_grid import save_patch_grid
 
 class DynamicPatchSelection(nn.Module):
     """
