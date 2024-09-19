@@ -201,6 +201,7 @@ def main():
             best_accuracy = accuracy
             best_weights = {k: v.cpu() for k, v in model.state_dict().items()}
 
+    print(f"Best Accuracy: {best_accuracy:.4f}")
     torch.save(best_weights, "std_vit_cifar10.pth")
 
 if __name__ == "__main__":

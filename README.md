@@ -39,9 +39,9 @@ The results suggest that dynamic patch selection improves accuracy by a **flat 3
 
 - Python 3.8+
 - PyTorch 2.0+
+- pyyaml
 - torchvision
 - tqdm
-- pyyaml
 
 You can install the required dependencies using:
 ```bash
