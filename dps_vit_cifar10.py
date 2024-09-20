@@ -99,7 +99,7 @@ def evaluate(
     accuracy = correct / total
     test_loss = running_loss / len(test_loader)
 
-    with open("dps_vit_test_loss.txt", "a") as file:
+    with open("training_data/dps_vit_test_loss_bounded_translations.txt", "a") as file:
         file.write(f"{test_loss}\n")
 
     return test_loss, accuracy
@@ -202,6 +202,6 @@ def main():
             best_weights = {k: v.cpu() for k, v in model.state_dict().items()}
 
     print(f"Best Accuracy: {best_accuracy:.4f}")
-    torch.save(best_weights, "dps_vit_cifar10.pth")
+    torch.save(best_weights, "dps_vit_cifar10_bounded_translations.pth")
 
 if __name__ == "__main__": main()

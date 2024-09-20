@@ -2,16 +2,12 @@
 # MIT License
 # See LICENSE file in the project root for full license information.
 
-import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.init as init
-import torchvision.transforms as transforms
-import torchvision.utils as vutils
 
 from modules.ConvBlock import ConvBlock
 from modules.ConvSelfAttn import ConvSelfAttn
-from modules.save_patch_grid import save_patch_grid
 
 class DynamicPatchSelection(nn.Module):
     """
@@ -85,13 +81,10 @@ class DynamicPatchSelection(nn.Module):
         )
         self.fc = nn.Linear(channel_height // 2 * channel_width // 2, 2)
         self.activation = nn.Tanh()
-
         self.pos_embed = nn.Linear(2, pos_embed_dim)
 
         self.dropout = nn.Dropout(dropout)
 
-        self.save_data = False
-        self.save_path = "0"
         self.init_weights()
 
     def init_weights(self):
@@ -109,6 +102,13 @@ class DynamicPatchSelection(nn.Module):
 
         translation_params = self.fc(features).view(b, self.total_patches, 2)
         translation_params = self.activation(translation_params)
+
+        x_translations = translation_params[:, :, 0]
+        x_translations = x_translations * (1 - self.patch_size / w)
+        y_translations = translation_params[:, :, 1]
+        y_translations = y_translations * (1 - self.patch_size / h)
+
+        translation_params = torch.stack([x_translations, y_translations], dim=-1)
 
         affine_transforms = torch.zeros(b, self.total_patches, 2, 3, device=x.device)
         affine_transforms[:, :, 0, 0] = self.patch_size / w
@@ -129,33 +129,6 @@ class DynamicPatchSelection(nn.Module):
             align_corners=False
         )
 
-        if self.save_data:
-            # save a random image and its patches for debugging
-            image_idx = np.random.randint(0, x.size(0))
-            image_tensor = x[image_idx].clone().detach()
-            save_patches = patches.view(
-                b,
-                self.total_patches,
-                c,
-                self.patch_size,
-                self.patch_size
-            )[image_idx]
-            save_params = translation_params[image_idx]
-            save_patch_grid(
-                save_patches,
-                save_params,
-                "saved_data/patches_" + self.save_path + ".png",
-            )
-            resize_transform = transforms.Resize((512, 512))
-            image_tensor = resize_transform(image_tensor)
-            vutils.save_image(
-                image_tensor,
-                "saved_data/image_" + self.save_path + ".png"
-            )
-
-            self.save_data = False
-            self.save_path = str(int(self.save_path) + 1)
-
         patches = patches.view(
             b,
             self.total_patches,
@@ -166,4 +139,4 @@ class DynamicPatchSelection(nn.Module):
 
         pos_embeds = self.pos_embed(translation_params)
 
-        return patches, pos_embeds
+        return patches, pos_embeds, translation_params
