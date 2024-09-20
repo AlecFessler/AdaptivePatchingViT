@@ -19,9 +19,9 @@ To illustrate the difference between our Dynamic Patch Selection approach and th
  - Middle: Patches selected by a standard ViT using a fixed grid.
  - Right: Patches dynamically selected by the DpsViT, focusing on informative regions.
 
-![Original Image](assets/original_bird.png)
-![Standard ViT Patches](assets/std_patched_bird.png)
-![Dynamic Patch Selection Patches](assets/dps_patched_bird.png)
+![Original Image](assets/visual_comparison_original.png)
+![Standard ViT Patches](assets/visual_comparison_standard.png)
+![Dynamic Patch Selection Patches](assets/visual_comparison_dps.png)
 
 As you can see, the Dynamic Patch Selection allows the model to focus on more relevant parts of the image, potentially leading to better feature extraction and classification performance.
 
