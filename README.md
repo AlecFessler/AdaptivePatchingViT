@@ -51,23 +51,27 @@ We evaluated both models on the CIFAR-10 dataset without any pretraining, ensuri
 ### Performance Metrics
 
 - **Dynamic Patch Selection ViT**:
-  - **Highest Achieved Accuracy**: **_Placeholder: 80%_**
-  - **Training Loss Convergence**: Reached lower training loss values more rapidly, indicating efficient learning and optimization.
+  - **Highest Achieved Accuracy**: **_77.84%_**
+  - **Training Loss Convergence**: Initially converges slower due to the learning of effective patch selection, but surpasses the standard model in later epochs, achieving lower overall training loss.
 - **Standard ViT**:
-  - **Highest Achieved Accuracy**: **_Placeholder: 75%_**
-  - **Training Loss Convergence**: Showed slower convergence and settled at higher training loss values compared to the Dynamic Patch Selection ViT.
+  - **Highest Achieved Accuracy**: **_72.85%_**
+  - **Training Loss Convergence**: Faster initial convergence but settles at a higher overall loss compared to the Dynamic Patch Selection ViT.
 
 ### Training Loss Comparison
 
-The training loss curves for both models are depicted in the figure below (to be included). The Dynamic Patch Selection ViT demonstrates a faster reduction in training loss during the initial epochs and achieves a lower final training loss. This suggests that the dynamic patch selection mechanism not only aids in focusing on more relevant image regions but also enhances the overall optimization process.
+The training loss curves for both models are depicted in the figure below.
+
+![Training Loss Curves](training_loss.png)
+
+The Dynamic Patch Selection ViT initially converges slower, likely due to the learning required for effective patch selection. However, it surpasses the standard ViT as training progresses, achieving a lower final loss. This indicates that the dynamic patch selection mechanism not only aids in focusing on relevant image regions but also enhances the overall optimization process.
 
 ### Accuracy Improvement
 
-The Dynamic Patch Selection ViT outperformed the standard ViT by **_Placeholder: 5%_** in terms of highest achieved accuracy on the test set. This improvement underscores the effectiveness of allowing the model to adaptively select patches, leading to better feature representation and generalization.
+The Dynamic Patch Selection ViT outperformed the standard ViT by **_4.99%_** in terms of highest achieved accuracy on the test set. This improvement underscores the effectiveness of allowing the model to adaptively select patches, leading to better feature representation and generalization.
 
 ### Observations
 
-- **Convergence Speed**: The Dynamic Patch Selection model converged faster during training, which can be attributed to its ability to focus on informative regions and the regularization effect of dynamic patch sampling.
+- **Convergence Speed**: While the Dynamic Patch Selection model starts with slower convergence due to the complexity of learning adaptive patch selection, it eventually surpasses the standard model, indicating its long-term learning efficiency.
 - **Generalization**: The inherent variability introduced by dynamic patch selection acts as a form of data augmentation, enhancing the model's generalization capabilities on unseen data.
 - **Model Complexity**: Despite the additional computations introduced by the STN, the overall model complexity remains comparable to the standard ViT. The benefits in performance are achieved without a significant increase in computational overhead.
 
@@ -118,9 +122,3 @@ This project is licensed under the MIT License. See the [LICENSE](LICENSE) file 
 
 - **Alec Fessler** © 2024
 - Special thanks to the PyTorch community and the open-source deep learning ecosystem for tools and inspiration.
-
-# © 2024 Alec Fessler
-
-# MIT License
-
-# See LICENSE file in the project root for full license information.
