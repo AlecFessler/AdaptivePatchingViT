@@ -61,7 +61,7 @@ We evaluated both models on the CIFAR-10 dataset without any pretraining, ensuri
 
 The training loss curves for both models are depicted in the figure below.
 
-![Training Loss Curves](training_loss.png)
+![Training Loss Curves](assets/training_loss.png)
 
 The Dynamic Patch Selection ViT initially converges slower, likely due to the learning required for effective patch selection. However, it surpasses the standard ViT as training progresses, achieving a lower final loss. This indicates that the dynamic patch selection mechanism not only aids in focusing on relevant image regions but also enhances the overall optimization process.
 
