@@ -14,22 +14,23 @@ Our **Dynamic Patch Selection** mechanism introduces a learnable cropping functi
 ### 1. Learnable Affine Transformations
 
 - The STN outputs translation parameters for each patch, defining where to sample the patch from the input image.
-- These parameters are passed through a hyperbolic tangent (`tanh`) activation function and then scaled by \( 1 - rac{	ext{patch size}}{	ext{image size}} \). This scaling ensures that the sampled patches remain within the image boundaries and adjusts the range of possible translations based on the relative sizes of the patches and the image.
-- The scaling factors in the affine transformation matrix are fixed based on the desired patch size relative to the input image size, while rotation parameters are set to zero, focusing the transformations on translations.
+- These parameters are passed through a hyperbolic tangent (`tanh`) activation function and then scaled to ensure that the sampled patches remain within the image boundaries and adjust based on the relative sizes of the patches and the image.
+- Specifically, the scaling factor is calculated as:
 
-  The affine transformation matrix \( \mathbf{A} \) used for sampling patches is defined as:
+  ```
+  scaling_factor = 1 - (patch size / image size)
+  ```
 
-  \[
-  \mathbf{A} = egin{bmatrix}
-  s & 0 & t_x \
-  0 & s & t_y
-  \end{bmatrix}
-  \]
+  The affine transformation matrix used for sampling patches is:
+
+  ```
+  A = [[s, 0, t_x],
+       [0, s, t_y]]
+  ```
 
   where:
-
-  - \( s = rac{	ext{patch size}}{	ext{image size}} \) is the scaling factor.
-  - \( t_x, t_y = 	anh(	ext{parameters}) 	imes \left(1 - rac{	ext{patch size}}{	ext{image size}}ight) \) are the translation parameters along the x and y axes, scaled appropriately.
+  - `s` is the ratio of patch size to image size, i.e., `s = patch size / image size`
+  - `t_x, t_y` are the translation parameters for the x and y axes, respectively, scaled appropriately.
 
 ### 2. Dynamic Patch Sampling
 
@@ -45,7 +46,7 @@ Our **Dynamic Patch Selection** mechanism introduces a learnable cropping functi
 
 ### STN Architecture Flexibility
 
-The architecture of the Spatial Transformer Network (STN) used to generate the translation parameters is highly flexible. For implementing the dynamic patch selection mechanism, the only requirement is that the STN ends with a multi-layer perceptron (MLP) that outputs a 2-dimensional vector corresponding to the translation parameters \( t_x \) and \( t_y \).
+The architecture of the Spatial Transformer Network (STN) used to generate the translation parameters is highly flexible. For implementing the dynamic patch selection mechanism, the only requirement is that the STN ends with a multi-layer perceptron (MLP) that outputs a 2-dimensional vector corresponding to the translation parameters (`t_x` and `t_y`).
 
 This flexibility allows you to design the STN according to your specific needs, whether you prefer a simple network for efficiency or a more complex one for capturing intricate spatial relationships. The key is that the STN effectively learns to output meaningful translation parameters that guide the dynamic patch selection process.
 
@@ -74,10 +75,10 @@ We evaluated both models on the CIFAR-10 dataset without any pretraining, ensuri
 ### Performance Metrics
 
 - **Dynamic Patch Selection ViT**:
-  - **Highest Achieved Accuracy**: **77.84%**
+  - **Highest Achieved Accuracy**: 77.84%
   - **Training Loss Convergence**: Initially converges slower due to the learning of effective patch selection, but surpasses the standard model in later epochs, achieving lower overall training loss.
 - **Standard ViT**:
-  - **Highest Achieved Accuracy**: **72.85%**
+  - **Highest Achieved Accuracy**: 72.85%
   - **Training Loss Convergence**: Faster initial convergence but settles at a higher overall loss compared to the Dynamic Patch Selection ViT.
 
 ### Training Loss Comparison
