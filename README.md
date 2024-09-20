@@ -84,7 +84,7 @@ The standard ViT serves as a baseline model, utilizing a fixed grid of patches a
 
 ## Results
 
-We evaluated both models on the CIFAR-10 dataset without any pretraining, ensuring a fair comparison by keeping all hyperparameters and model sizes identical.
+We evaluated both models on the CIFAR-10 dataset *without any pretraining*, ensuring a fair comparison by keeping all hyperparameters and model sizes identical.
 
 ### Performance Metrics
 
