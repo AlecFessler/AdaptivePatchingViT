@@ -15,9 +15,9 @@ Our **Dynamic Patch Selection** mechanism introduces a learnable cropping functi
 
 To illustrate the difference between our Dynamic Patch Selection approach and the standard ViT patching, we've prepared a visual comparison using a sample image from the CIFAR-10 dataset.
 
- - Left: The original input image of a bird from CIFAR-10.
- - Middle: Patches selected by a standard ViT using a fixed grid.
- - Right: Patches dynamically selected by the DpsViT, focusing on informative regions, sorted by their original positions.
+- Left: The original input image of a bird from CIFAR-10.
+- Middle: Patches selected by a standard ViT using a fixed grid.
+- Right: Patches dynamically selected by the DpsViT, focusing on informative regions, sorted by their original positions just for sake of visualization.
 
 ![Original Image](assets/visual_comparison_original.png)
 ![Standard ViT Patches](assets/visual_comparison_standard.png)
@@ -112,6 +112,11 @@ The Dynamic Patch Selection ViT outperformed the standard ViT by **5.6%** in ter
 - **Convergence Speed**: While the Dynamic Patch Selection model starts with slower convergence due to the complexity of learning adaptive patch selection, it eventually surpasses the standard model, indicating its long-term learning efficiency.
 - **Generalization**: The inherent variability introduced by dynamic patch selection acts as a form of data augmentation, enhancing the model's generalization capabilities on unseen data.
 - **Model Complexity**: Despite the additional computations introduced by the STN, the overall model complexity remains comparable to the standard ViT. The benefits in performance are achieved without a significant increase in computational overhead.
+
+## Citations
+
+- **Vision Transformer (ViT)**: Dosovitskiy, A., et al. (2020). *An Image is Worth 16x16 Words: Transformers for Image Recognition at Scale*. [arXiv:2010.11929](https://arxiv.org/abs/2010.11929).
+- **Spatial Transformer Networks (STN)**: Jaderberg, M., et al. (2015). *Spatial Transformer Networks*. Advances in Neural Information Processing Systems (NeurIPS). [arXiv:1506.02025](https://arxiv.org/abs/1506.02025).
 
 ## How to Run
 
