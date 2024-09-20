@@ -99,8 +99,8 @@ def evaluate(
         accuracy = correct / total
         test_loss = running_loss / len(test_loader)
 
-        with open("std_vit_test_loss.txt", "a") as file:
-            file.write(f"{test_loss}\n")
+        #with open("std_vit_test_loss.txt", "a") as file:
+            #file.write(f"{test_loss}\n")
 
         return test_loss, accuracy
 

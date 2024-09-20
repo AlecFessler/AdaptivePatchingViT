@@ -11,6 +11,20 @@ Traditional Vision Transformers divide an image into a fixed grid of patches, tr
 
 Our **Dynamic Patch Selection** mechanism introduces a learnable cropping function that allows the model to focus on specific regions dynamically. This is achieved through the integration of a Spatial Transformer Network (STN) that generates translation parameters for patch selection. The main components of this mechanism are:
 
+## Visual Comparison: Standard vs Dynamic Patch Selection
+
+To illustrate the difference between our Dynamic Patch Selection approach and the standard ViT patching, we've prepared a visual comparison using a sample image from the CIFAR-10 dataset.
+
+ - Left: The original input image of a bird from CIFAR-10.
+ - Middle: Patches selected by a standard ViT using a fixed grid.
+ - Right: Patches dynamically selected by the DpsViT, focusing on informative regions.
+
+![Original Image](assets/original_bird.png)
+![Standard ViT Patches](assets/std_patched_bird.png)
+![Dynamic Patch Selection Patches](assets/dps_patched_bird.png)
+
+As you can see, the Dynamic Patch Selection allows the model to focus on more relevant parts of the image, potentially leading to better feature extraction and classification performance.
+
 ### 1. Learnable Affine Transformations
 
 - The STN outputs translation parameters for each patch, defining where to sample the patch from the input image.
