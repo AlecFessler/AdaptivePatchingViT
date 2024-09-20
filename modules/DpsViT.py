@@ -4,10 +4,8 @@
 
 import torch
 import torch.nn as nn
-from torchvision import utils as vutils
 from modules.DynamicPatchSelection import DynamicPatchSelection
 from modules.SelfAttn import SelfAttn
-from utils.save_patch_grid import save_patch_grid
 
 class DpsViT(nn.Module):
     def __init__(
@@ -50,28 +48,8 @@ class DpsViT(nn.Module):
         self.norm = nn.LayerNorm(attn_embed_dim + pos_embed_dim)
         self.fc = nn.Linear(attn_embed_dim + pos_embed_dim, 10)
 
-        self.saved_image = False
-
     def forward(self, x):
-        imgs = x
-        x, pos_embeds, translation_params = self.dynamic_patch(x)
-
-        # save a random patch grid during eval for debugging
-        if not self.training and not self.saved_image:
-            random_idx = torch.randint(0, x.size(0), (1,)).item()
-            save_patch_grid(
-                x[random_idx],
-                translation_params[random_idx],
-                f"assets/patches_{random_idx}.png",
-                channels=self.dynamic_patch.in_channels,
-                patch_size=self.dynamic_patch.patch_size
-            )
-            vutils.save_image(imgs[random_idx], f"assets/img_{random_idx}.png")
-            self.saved_image = True
-
-        if self.training:
-            self.saved_image = False
-
+        x, pos_embeds = self.dynamic_patch(x)
         x = self.embedding_layer(x)
         x = torch.cat((x, pos_embeds), dim=-1)
         cls_tokens = self.cls_token.expand(x.size(0), -1, -1)

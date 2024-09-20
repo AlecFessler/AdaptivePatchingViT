@@ -9,7 +9,7 @@ This repository presents an implementation of **Dynamic Patch Selection** for Vi
 
 Traditional Vision Transformers divide an image into a fixed grid of patches, treating each patch equally and using fixed positional embeddings. While this approach simplifies the architecture, it may not fully leverage the spatial importance of different image regions, potentially leading to suboptimal performance.
 
-Our **Dynamic Patch Selection** mechanism introduces a learnable cropping function that allows the model to focus on specific regions dynamically. This is achieved through the integration of a Spatial Transformer Network (STN) that generates translation parameters for patch selection. The main components of this mechanism are:
+Our **Dynamic Patch Selection** mechanism introduces a learnable cropping function that allows the model to focus on specific regions dynamically. This is achieved through the integration of a Spatial Transformer Network (STN) that generates translation parameters for patch selection.
 
 ## Visual Comparison: Standard vs Dynamic Patch Selection
 
@@ -89,10 +89,10 @@ We evaluated both models on the CIFAR-10 dataset without any pretraining, ensuri
 ### Performance Metrics
 
 - **Dynamic Patch Selection ViT**:
-  - **Highest Achieved Accuracy**: 78.45%
+  - **Highest Achieved Accuracy**: 90.99%
   - **Training Loss Convergence**: Initially converges slower due to the learning of effective patch selection, but surpasses the standard model in later epochs, achieving lower overall training loss.
 - **Standard ViT**:
-  - **Highest Achieved Accuracy**: 72.85%
+  - **Highest Achieved Accuracy**: 87.87%
   - **Training Loss Convergence**: Faster initial convergence but settles at a higher overall loss compared to the Dynamic Patch Selection ViT.
 
 ### Training Loss Comparison
@@ -105,7 +105,7 @@ The Dynamic Patch Selection ViT initially converges slower, likely due to the le
 
 ### Accuracy Improvement
 
-The Dynamic Patch Selection ViT outperformed the standard ViT by **5.6%** in terms of highest achieved accuracy on the test set. This improvement underscores the effectiveness of allowing the model to adaptively select patches, leading to better feature representation and generalization.
+The Dynamic Patch Selection ViT outperformed the standard ViT by **3.12%** in terms of highest achieved accuracy on the test set. This improvement underscores the effectiveness of allowing the model to adaptively select patches, leading to better feature representation and generalization.
 
 ### Observations
 

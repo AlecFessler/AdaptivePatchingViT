@@ -139,4 +139,4 @@ class DynamicPatchSelection(nn.Module):
 
         pos_embeds = self.pos_embed(translation_params)
 
-        return patches, pos_embeds, translation_params
+        return patches, pos_embeds
