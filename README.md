@@ -25,6 +25,8 @@ To illustrate the difference between our Dynamic Patch Selection approach and th
 
 As you can see, the Dynamic Patch Selection allows the model to focus on more relevant parts of the image, potentially leading to better feature extraction and classification performance.
 
+## Key Components of Dynamic Patch Selection
+
 ### 1. Learnable Affine Transformations
 
 - The STN outputs translation parameters for each patch, defining where to sample the patch from the input image.
