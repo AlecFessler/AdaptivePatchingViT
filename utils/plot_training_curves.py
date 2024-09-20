@@ -7,8 +7,8 @@ def read_losses(filename):
             losses.append(float(line.strip()))
     return losses
 
-dps_vit_losses = read_losses("dps_vit_test_loss.txt")
-standard_vit_losses = read_losses("std_vit_test_loss.txt")
+dps_vit_losses = read_losses("../training_data/dps_vit_test_loss_bounded_translations.txt")
+standard_vit_losses = read_losses("../training_data/std_vit_test_loss.txt")
 
 epochs = range(1, len(dps_vit_losses) + 1)
 
