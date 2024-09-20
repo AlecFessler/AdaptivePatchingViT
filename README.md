@@ -17,7 +17,7 @@ To illustrate the difference between our Dynamic Patch Selection approach and th
 
  - Left: The original input image of a bird from CIFAR-10.
  - Middle: Patches selected by a standard ViT using a fixed grid.
- - Right: Patches dynamically selected by the DpsViT, focusing on informative regions.
+ - Right: Patches dynamically selected by the DpsViT, focusing on informative regions, sorted by their original positions.
 
 ![Original Image](assets/visual_comparison_original.png)
 ![Standard ViT Patches](assets/visual_comparison_standard.png)
