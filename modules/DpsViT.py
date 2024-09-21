@@ -20,7 +20,9 @@ class DpsViT(nn.Module):
         pos_embed_dim=32,
         total_patches=16,
         patch_size=8,
-        dropout=0.1
+        stn_dropout=0.1,
+        patch_dropout=0,
+        transformer_dropout=0.1
     ):
         super(DpsViT, self).__init__()
 
@@ -34,14 +36,15 @@ class DpsViT(nn.Module):
             pos_embed_dim=pos_embed_dim,
             total_patches=total_patches,
             patch_size=patch_size,
-            dropout=dropout
+            stn_dropout=stn_dropout,
+            patch_dropout=patch_dropout
         )
         self.embedding_layer = nn.Linear(in_channels * patch_size * patch_size, attn_embed_dim)
 
         self.cls_token = nn.Parameter(torch.randn(1, 1, attn_embed_dim + pos_embed_dim))
 
         self.transformer_layers = nn.ModuleList([
-            SelfAttn(embed_dim=attn_embed_dim + pos_embed_dim, num_heads=attn_heads, dropout=dropout)
+            SelfAttn(embed_dim=attn_embed_dim + pos_embed_dim, num_heads=attn_heads, dropout=transformer_dropout)
             for _ in range(num_transformer_layers)
         ])
 

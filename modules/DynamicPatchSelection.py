@@ -41,7 +41,8 @@ class DynamicPatchSelection(nn.Module):
         pos_embed_dim,
         total_patches,
         patch_size,
-        dropout=0.1
+        stn_dropout=0.1,
+        patch_dropout=0
     ):
         super(DynamicPatchSelection, self).__init__()
         self.in_channels = in_channels
@@ -61,7 +62,7 @@ class DynamicPatchSelection(nn.Module):
             channel_width=channel_width,
             embed_dim=attn_embed_dim,
             num_heads=attn_heads,
-            dropout=dropout
+            dropout=stn_dropout
         )
         self.maxpool = nn.MaxPool2d(kernel_size=2, stride=2)
         self.conv2 = ConvBlock(
@@ -77,13 +78,13 @@ class DynamicPatchSelection(nn.Module):
             channel_width=channel_width // 2,
             embed_dim=attn_embed_dim,
             num_heads=attn_heads,
-            dropout=dropout
+            dropout=stn_dropout
         )
         self.fc = nn.Linear(channel_height // 2 * channel_width // 2, 2)
         self.activation = nn.Tanh()
         self.pos_embed = nn.Linear(2, pos_embed_dim)
 
-        self.dropout = nn.Dropout(dropout)
+        self.dropout = nn.Dropout(patch_dropout)
 
         self.init_weights()
 
@@ -135,7 +136,7 @@ class DynamicPatchSelection(nn.Module):
             c * self.patch_size * self.patch_size,
         )
 
-        # patches = self.dropout(patches)
+        patches = self.dropout(patches)
 
         pos_embeds = self.pos_embed(translation_params)
 

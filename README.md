@@ -93,10 +93,10 @@ Both models were evaluated on the CIFAR-10 dataset **without any pretraining**, 
 ### Performance Metrics
 
 - **Dynamic Patch Selection ViT**:
-  - **Highest Achieved Accuracy**: 90.99%
+  - **Highest Achieved Accuracy**: 79.15%
   - **Training Loss Convergence**: Initially converges slower due to the learning of effective patch selection, but surpasses the standard model in later epochs, achieving lower overall training loss.
 - **Standard ViT**:
-  - **Highest Achieved Accuracy**: 87.87%
+  - **Highest Achieved Accuracy**: 72.85%
   - **Training Loss Convergence**: Faster initial convergence but settles at a higher overall loss compared to the Dynamic Patch Selection ViT.
 
 ### Training Loss Comparison
@@ -109,7 +109,7 @@ The Dynamic Patch Selection ViT initially converges slower, likely due to the le
 
 ### Accuracy Improvement
 
-The Dynamic Patch Selection ViT outperformed the standard ViT by **3.12%** in terms of highest achieved accuracy on the test set. This improvement underscores the effectiveness of allowing the model to adaptively select patches, leading to better feature representation and generalization.
+The Dynamic Patch Selection ViT outperformed the standard ViT by **6.30%** in terms of highest achieved accuracy on the test set. This improvement underscores the effectiveness of allowing the model to adaptively select patches, leading to better feature representation and generalization.
 
 ### Observations
 
