@@ -4,6 +4,8 @@ from optuna.visualization import plot_optimization_history, plot_param_importanc
 def visualize_study():
     study = optuna.load_study(study_name="DpsViT_Cifar10", storage="sqlite:///DpsViT_Cifar10.db")
 
+    print(study.best_params)
+
     opt_history = plot_optimization_history(study)
     opt_history.show()
 

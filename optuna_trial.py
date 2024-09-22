@@ -7,8 +7,7 @@ import torch.nn as nn
 import torchvision
 import torchvision.transforms as transforms
 from torch.utils.data import DataLoader
-from torch.amp.grad_scaler import GradScaler
-from torch.amp.autocast_mode import autocast
+from torch.cuda.amp import GradScaler, autocast
 from torch.optim.lr_scheduler import CosineAnnealingWarmRestarts, LambdaLR
 from tqdm import tqdm
 import yaml
@@ -167,23 +166,28 @@ def objective(trial):
     torch.backends.cudnn.benchmark = False
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    batch_size = 256
+    config = load_config("hparams_config.yaml")
+
+    # Fixed parameters
+    batch_size = config.get("batch_size", 256)
+    accumulation_steps = 1
+    attn_embed_dim = config.get("attn_embed_dim", 256)
+    num_transformer_layers = config.get("num_transformer_layers", 4)
+    stn_dropout = config.get("stn_dropout", 0.0)
+    patch_dropout = config.get("patch_dropout", 0.0)
+    transformer_dropout = config.get("transformer_dropout", 0.4)
+    label_smoothing = config.get("label_smoothing", 0.05)
+
+    # Trial parameters
     dynamic_patch_lr = trial.suggest_float("dynamic_patch_lr", 1e-5, 1e-3, log=True)
     learning_rate = trial.suggest_float("learning_rate", 1e-5, 1e-3, log=True)
     weight_decay = trial.suggest_float("weight_decay", 1e-5, 1e-3, log=True)
-    t_0 = trial.suggest_int("T_0", 10, 40)
+    t_0 = trial.suggest_int("T_0", 10, 75)
     t_mult = trial.suggest_int("T_mult", 1, 3)
-    eta_min = trial.suggest_float("eta_min", 1e-6, 1e-3, log=True)
-    label_smoothing = trial.suggest_float("label_smoothing", 0.0, 0.2)
-    warmup_epochs = trial.suggest_int("warmup_epochs", 5, 10)
-    accumulation_steps = trial.suggest_int("accumulation_steps", 1, 5)
+    eta_min = trial.suggest_float("eta_min", 0, 1e-3, log=True)
+    warmup_epochs = trial.suggest_int("warmup_epochs", 5, 25)
 
-    hidden_channels = trial.suggest_int("hidden_channels", 16, 64, step=8)
-    attn_embed_dim = trial.suggest_int("attn_embed_dim", 256, 512, step=64)
-    num_transformer_layers = trial.suggest_int("num_transformer_layers", 2, 8, step=2)
-    stn_dropout = trial.suggest_float("stn_dropout", 0.0, 0.5)
-    patch_dropout = trial.suggest_float("patch_dropout", 0.0, 0.5)
-    transformer_dropout = trial.suggest_float("transformer_dropout", 0.0, 0.5)
+    hidden_channels = trial.suggest_int("hidden_channels", 32, 128, step=8)
 
     trainloader, testloader = get_dataloaders(batch_size, 4)
 
