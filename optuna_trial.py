@@ -212,6 +212,8 @@ def objective(trial):
 
             trial.report(accuracy, epoch)
 
+            print(f"Epoch: {epoch + 1} | Train Loss: {train_loss} | Test Loss: {test_loss} | Accuracy: {accuracy}")
+
             if trial.should_prune():
                 raise TrialPruned()
 
@@ -227,8 +229,8 @@ def main():
         interval_steps=1
     )
 
-    study = optuna.create_study(direction="maximize", pruner=pruner)
-    study.optimize(objective, n_trials=50)
+    study = optuna.create_study(direction="maximize", pruner=pruner, study_name="DpsViT_Cifar10", storage="sqlite:///DpsViT_Cifar10.db", load_if_exists=True)
+    study.optimize(objective, n_trials=100)
 
     print("Best trial:")
     trial = study.best_trial
