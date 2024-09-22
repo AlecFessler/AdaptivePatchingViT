@@ -15,9 +15,18 @@ import yaml
 from modules.StandardViT import StandardViT
 
 class StandardViTCifar10(nn.Module):
-    def __init__(self):
+    def __init__(
+        self,
+        attn_embed_dim,
+        num_transformer_layers,
+        transformer_dropout
+    ):
         super(StandardViTCifar10, self).__init__()
-        self.vit = StandardViT()
+        self.vit = StandardViT(
+            attn_embed_dim=attn_embed_dim,
+            num_transformer_layers=num_transformer_layers,
+            dropout=transformer_dropout
+        )
 
     def forward(self, x):
         return self.vit(x)
@@ -99,8 +108,8 @@ def evaluate(
         accuracy = correct / total
         test_loss = running_loss / len(test_loader)
 
-        #with open("std_vit_test_loss.txt", "a") as file:
-            #file.write(f"{test_loss}\n")
+        with open("experiments/training_data/std_vit_test_loss.txt", "a") as file:
+            file.write(f"{test_loss}\n")
 
         return test_loss, accuracy
 
@@ -143,23 +152,29 @@ def main():
     config = load_config("hparams_config.yaml")
 
     batch_size = config.get("batch_size", 256)
-    num_workers = config.get("num_workers", 4)
-    learning_rate = config.get("learning_rate", 1e-4)
-    weight_decay = config.get("weight_decay", 1e-3)
-    num_epochs = config.get("num_epochs", 300)
-    t_0 = config.get("T_0", 40)
-    t_mult = config.get("T_mult", 2)
-    eta_min = config.get("eta_min", 0)
-    warmup_epochs = config.get("warmup_epochs", 5)
-    label_smoothing = config.get("label_smoothing", 0.1)
+    num_epochs = config.get("num_epochs", 150)
+    warmup_epochs = config.get("warmup_epochs", 10)
+    transformer_lr = config.get("transformer_lr", 0.0003)
+    weight_decay = config.get("weight_decay", 0.000015)
+    t_0 = config.get("t_0", 40)
+    t_mult = config.get("t_mult", 2)
+    eta_min = config.get("eta_min", 0.00001)
+    label_smoothing = config.get("label_smoothing", 0.05)
+    attn_embed_dim = config.get("attn_embed_dim", 256)
+    num_transformer_layers = config.get("num_transformer_layers", 4)
+    transformer_dropout = config.get("transformer_dropout", 0.4)
 
-    trainloader, testloader = get_dataloaders(batch_size, num_workers)
+    trainloader, testloader = get_dataloaders(batch_size, num_workers=4)
 
-    model = StandardViTCifar10().to(device)
+    model = StandardViTCifar10(
+        attn_embed_dim=attn_embed_dim,
+        num_transformer_layers=num_transformer_layers,
+        transformer_dropout=transformer_dropout
+    ).to(device)
     criterion = nn.CrossEntropyLoss(label_smoothing=label_smoothing)
     optimizer = torch.optim.AdamW(
         model.parameters(),
-        lr=learning_rate,
+        lr=transformer_lr,
         weight_decay=weight_decay
     )
     scheduler = CosineAnnealingWarmRestarts(

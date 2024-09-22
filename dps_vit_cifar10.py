@@ -7,7 +7,8 @@ import torch.nn as nn
 import torchvision
 import torchvision.transforms as transforms
 from torch.utils.data import DataLoader
-from torch.cuda.amp import GradScaler, autocast
+from torch.amp.grad_scaler import GradScaler
+from torch.amp.autocast_mode import autocast
 from torch.optim.lr_scheduler import CosineAnnealingWarmRestarts, LambdaLR
 from tqdm import tqdm
 import yaml
@@ -113,7 +114,7 @@ def evaluate(
     accuracy = correct / total
     test_loss = running_loss / len(test_loader)
 
-    with open("training_data/dps_vit_test_loss.txt", "a") as file:
+    with open("experiments/training_data/dps_vit_test_loss.txt", "a") as file:
         file.write(f"{test_loss}\n")
 
     return test_loss, accuracy
@@ -136,7 +137,7 @@ def train(
         for images, labels in tepoch:
             images, labels = images.to(device), labels.to(device)
             optimizer.zero_grad()
-            with autocast():#device_type=device.type):
+            with autocast(device_type=device.type):
                 outputs = model(images)
                 loss = criterion(outputs, labels)
             scaler.scale(loss).backward()

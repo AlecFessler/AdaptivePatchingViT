@@ -7,14 +7,14 @@ import torch.nn as nn
 import torchvision
 import torchvision.transforms as transforms
 from torch.utils.data import DataLoader
-from torch.cuda.amp import GradScaler, autocast
+from torch.amp.grad_scaler import GradScaler
+from torch.amp.autocast_mode import autocast
 from torch.optim.lr_scheduler import CosineAnnealingWarmRestarts, LambdaLR
 from tqdm import tqdm
 import yaml
 from modules.DpsViT import DpsViT
 import optuna
 from optuna import TrialPruned
-from optuna.visualization import plot_optimization_history, plot_param_importances
 
 class DpsViTCifar10(nn.Module):
     def __init__(
@@ -185,7 +185,7 @@ def objective(trial):
     t_0 = trial.suggest_int("T_0", 10, 75)
     t_mult = trial.suggest_int("T_mult", 1, 3)
     eta_min = trial.suggest_float("eta_min", 0, 1e-3, log=True)
-    warmup_epochs = trial.suggest_int("warmup_epochs", 5, 25)
+    warmup_epochs = trial.suggest_int("warmup_epochs", 5, 20)
 
     hidden_channels = trial.suggest_int("hidden_channels", 32, 128, step=8)
 
@@ -210,7 +210,7 @@ def objective(trial):
     warmup_scheduler = LambdaLR(optimizer, lr_lambda=lambda epoch: epoch / warmup_epochs)
     best_accuracy = 0.0
 
-    for epoch in range(50):
+    for epoch in range(100):
             train_loss = train(model, trainloader, criterion, optimizer, scheduler, warmup_scheduler, warmup_epochs, epoch, accumulation_steps, device)
             test_loss, accuracy = evaluate(model, testloader, criterion, device)
 
@@ -224,29 +224,24 @@ def objective(trial):
             if accuracy > best_accuracy:
                 best_accuracy = accuracy
 
+
     return best_accuracy
 
 def main():
     pruner = optuna.pruners.MedianPruner(
-        n_startup_trials=5,
-        n_warmup_steps=10,
+        n_startup_trials=3,
+        n_warmup_steps=20,
         interval_steps=1
     )
 
-    study = optuna.create_study(direction="maximize", pruner=pruner, study_name="DpsViT_Cifar10", storage="sqlite:///DpsViT_Cifar10.db", load_if_exists=True)
-    study.optimize(objective, n_trials=100)
+    study = optuna.create_study(direction="maximize", pruner=pruner, study_name="DpsViT_Cifar10_2", storage="experiments/sqlite:///DpsViT_Cifar10_2.db", load_if_exists=True)
+    study.optimize(objective, n_trials=50)
 
     print("Best trial:")
     trial = study.best_trial
 
     print(f"Accuracy: {trial.value}")
     print("Best hyperparameters: ", trial.params)
-
-    fig1 = plot_optimization_history(study)
-    fig1.show()
-
-    fig2 = plot_param_importances(study)
-    fig2.show()
 
     with open("best_trial.yaml", "w") as file:
         yaml.dump(trial.params, file)

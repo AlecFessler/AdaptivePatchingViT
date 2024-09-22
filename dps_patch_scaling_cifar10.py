@@ -15,9 +15,26 @@ import yaml
 from modules.DpsViT import DpsViT
 
 class DpsViTCifar10(nn.Module):
-    def __init__(self, total_patches=16):
+    def __init__(
+        self,
+        total_patches,
+        hidden_channels,
+        attn_embed_dim,
+        num_transformer_layers,
+        stn_dropout,
+        patch_dropout,
+        transformer_dropout
+    ):
         super(DpsViTCifar10, self).__init__()
-        self.vit = DpsViT(total_patches=total_patches)
+        self.vit = DpsViT(
+            total_patches=total_patches,
+            hidden_channels=hidden_channels,
+            attn_embed_dim=attn_embed_dim,
+            num_transformer_layers=num_transformer_layers,
+            stn_dropout=stn_dropout,
+            patch_dropout=patch_dropout,
+            transformer_dropout=transformer_dropout
+        )
 
     def forward(self, x):
         return self.vit(x)
@@ -100,7 +117,7 @@ def evaluate(
     accuracy = correct / total
     test_loss = running_loss / len(test_loader)
 
-    with open(f"training_data/dps_vit_test_loss_{num_patches}_patches.txt", "a") as file:
+    with open(f"experiments/training_data/dps_vit_test_loss_{num_patches}_patches.txt", "a") as file:
         file.write(f"{test_loss}\n")
 
     return test_loss, accuracy
@@ -149,27 +166,40 @@ def main():
     config = load_config("hparams_config.yaml")
 
     batch_size = config.get("batch_size", 256)
-    num_workers = config.get("num_workers", 4)
-    learning_rate = config.get("learning_rate", 1e-4)
-    weight_decay = config.get("weight_decay", 1e-3)
-    num_epochs = config.get("num_epochs", 100)
-    t_0 = config.get("T_0", 40)
-    t_mult = config.get("T_mult", 2)
-    eta_min = config.get("eta_min", 0)
-    warmup_epochs = config.get("warmup_epochs", 5)
-    label_smoothing = config.get("label_smoothing", 0.1)
+    num_epochs = config.get("num_epochs", 150)
+    warmup_epochs = config.get("warmup_epochs", 10)
+    transformer_lr = config.get("transformer_lr", 0.0003)
+    stn_lr = config.get("stn_lr", 0.0001)
+    weight_decay = config.get("weight_decay", 0.000015)
+    t_0 = config.get("t_0", 40)
+    t_mult = config.get("t_mult", 2)
+    eta_min = config.get("eta_min", 0.00001)
+    label_smoothing = config.get("label_smoothing", 0.05)
+    hidden_channels = config.get("hidden_channels", 64)
+    attn_embed_dim = config.get("attn_embed_dim", 256)
+    num_transformer_layers = config.get("num_transformer_layers", 4)
+    stn_dropout = config.get("stn_dropout", 0.0)
+    patch_dropout = config.get("patch_dropout", 0.0)
+    transformer_dropout = config.get("transformer_dropout", 0.4)
 
-    trainloader, testloader = get_dataloaders(batch_size, num_workers)
+    trainloader, testloader = get_dataloaders(batch_size, num_workers=4)
 
     patches_tests = [16, 14, 12, 10, 8]
     for total_patches in patches_tests:
-        model = DpsViTCifar10(total_patches=total_patches).to(device)
+        model = DpsViTCifar10(
+            total_patches,
+            hidden_channels=hidden_channels,
+            attn_embed_dim=attn_embed_dim,
+            num_transformer_layers=num_transformer_layers,
+            stn_dropout=stn_dropout,
+            patch_dropout=patch_dropout,
+            transformer_dropout=transformer_dropout
+        ).to(device)
         criterion = nn.CrossEntropyLoss(label_smoothing=label_smoothing)
-        optimizer = torch.optim.AdamW(
-            model.parameters(),
-            lr=learning_rate,
-            weight_decay=weight_decay
-        )
+        optimizer = torch.optim.AdamW([
+            {"params": model.vit.dynamic_patch.parameters(), "lr": stn_lr},
+            {'params': [p for n, p in model.named_parameters() if 'dynamic_patch' not in n]},
+        ], lr=transformer_lr, weight_decay=weight_decay)
         scheduler = CosineAnnealingWarmRestarts(
             optimizer,
             T_0=t_0,
