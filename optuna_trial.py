@@ -33,6 +33,7 @@ class APViTCifar10(nn.Module):
             num_patches=num_patches,
             hidden_channels=hidden_channels,
             attn_embed_dim=attn_embed_dim,
+            pos_embed_dim=attn_embed_dim,
             num_transformer_layers=num_transformer_layers,
             stochastic_depth=stochastic_depth,
             scaling=scaling,
@@ -57,11 +58,11 @@ def get_dataloaders(
     train_transform = create_transform(
         input_size=32,
         is_training=True,
-        auto_augment=f'rand-m{augment_magnitude}-mstd0.5-inc1',  # RandAugment with magnitude 9, matches DEiT setup
-        re_prob=re_prob,  # Random Erasing with probability 0.25 (DEiT setup)
-        re_mode='pixel',  # Erase pixels
-        re_count=1,  # Number of erasing operations
-        mean=[0.4914, 0.4822, 0.4465],  # CIFAR-10 normalization
+        auto_augment=f'rand-m{augment_magnitude}-mstd0.5-inc1',
+        re_prob=re_prob,
+        re_mode='pixel',
+        re_count=1,
+        mean=[0.4914, 0.4822, 0.4465],
         std=[0.2470, 0.2435, 0.2616]
     )
 

@@ -17,19 +17,24 @@ from timm.data import Mixup, create_transform
 class APViTCifar10(nn.Module):
     def __init__(
         self,
-        total_patches,
+        num_patches,
         hidden_channels,
         attn_embed_dim,
         num_transformer_layers,
-        transformer_dropout
+        stochastic_depth,
+        scaling,
+        rotating
     ):
         super(APViTCifar10, self).__init__()
         self.vit = APViT(
-            total_patches=total_patches,
+            num_patches=num_patches,
             hidden_channels=hidden_channels,
             attn_embed_dim=attn_embed_dim,
+            pos_embed_dim=attn_embed_dim,
             num_transformer_layers=num_transformer_layers,
-            transformer_dropout=transformer_dropout
+            stochastic_depth=stochastic_depth,
+            scaling=scaling,
+            rotating=rotating
         )
 
     def forward(self, x):
@@ -40,15 +45,20 @@ def load_config(config_file):
         config = yaml.safe_load(file)
     return config
 
-def get_dataloaders(batch_size, num_workers):
+def get_dataloaders(
+        batch_size,
+        num_workers=2,
+        augment_magnitude=9,
+        re_prob=0.25
+    ):
     train_transform = create_transform(
         input_size=32,
         is_training=True,
-        auto_augment='rand-m5-mstd0.5',  # RandAugment with magnitude 9, matches DEiT setup
-        re_prob=0.25,  # Random Erasing with probability 0.25 (DEiT setup)
-        re_mode='pixel',  # Erase pixels
-        re_count=1,  # Number of erasing operations
-        mean=[0.4914, 0.4822, 0.4465],  # CIFAR-10 normalization
+        auto_augment=f'rand-m{augment_magnitude}-mstd0.5-inc1',
+        re_prob=re_prob,
+        re_mode='pixel',
+        re_count=1,
+        mean=[0.4914, 0.4822, 0.4465],
         std=[0.2470, 0.2435, 0.2616]
     )
 
@@ -166,40 +176,45 @@ def main():
     config = load_config("hparams_config.yaml")
 
     batch_size = config.get("batch_size", 256)
-    num_epochs = config.get("epochs", 200)
-    lr = 0.0005 * batch_size / 512
+    epochs = config.get("epochs", 200)
     warmup_epochs = config.get("warmup_epochs", 5)
-    weight_decay = config.get("weight_decay", 0.05)
-    eta_min = config.get("eta_min", 1e-6)
-    hidden_channels = config.get("hidden_channels", 32)
-    attn_embed_dim = config.get("attn_embed_dim", 192)
-    num_transformer_layers = config.get("num_transformer_layers", 6)
-    transformer_dropout = config.get("transformer_dropout", 0.1)
+    weight_decay = config.get("weight_decay", 0.000015)
+    lr_factor = config.get("lr_factor", 512)
+    lr = 0.0005 * batch_size / lr_factor
+    eta_min = config.get("eta_min", 0.00001)
+    hidden_channels = config.get("hidden_channels", 20)
+    attn_embed_dim = config.get("attn_embed_dim", 320)
+    num_transformer_layers = config.get("num_transformer_layers", 8)
+    stochastic_depth = config.get("stochastic_depth", 0.15)
+    label_smoothing = config.get("label_smoothing", 0.05)
+    re_prob = config.get("re_prob", 0.15)
+    augment_magnitude = config.get("augment_magnitude", 5)
 
-    trainloader, testloader = get_dataloaders(batch_size, num_workers=4)
+    trainloader, testloader = get_dataloaders(batch_size, num_workers=4, augment_magnitude=augment_magnitude, re_prob=re_prob)
 
-    patches_tests = [16, 14, 12, 10, 8]
-    for total_patches in patches_tests:
+    patches_tests = [16]#, 14, 12, 10, 8]
+    for num_patches in patches_tests:
 
         model = APViTCifar10(
-            total_patches,
+            num_patches,
             hidden_channels=hidden_channels,
             attn_embed_dim=attn_embed_dim,
             num_transformer_layers=num_transformer_layers,
-            transformer_dropout=transformer_dropout
+            stochastic_depth=stochastic_depth,
+            scaling=None,
+            rotating=False
         ).to(device)
 
-        criterion = nn.CrossEntropyLoss()
+        criterion = nn.CrossEntropyLoss(label_smoothing=label_smoothing)
 
-        optimizer = torch.optim.AdamW(
-            model.parameters(),
-            lr=lr,
-            weight_decay=weight_decay
-        )
+        optimizer = torch.optim.AdamW([
+            {'params': [p for n, p in model.named_parameters() if 'bias' in n], 'weight_decay': 0.0},
+            {'params': [p for n, p in model.named_parameters() if 'bias' not in n], 'weight_decay': weight_decay}
+        ], lr=lr)
 
         scheduler = CosineAnnealingLR(
             optimizer,
-            T_max=num_epochs-warmup_epochs,
+            T_max=epochs-warmup_epochs,
             eta_min=eta_min
         )
         warmup_scheduler = LambdaLR(
@@ -210,7 +225,7 @@ def main():
         best_weights = None
         best_accuracy = 0.0
 
-        for epoch in range(num_epochs):
+        for epoch in range(epochs):
             train_loss = train(
                 model,
                 trainloader,
@@ -229,17 +244,16 @@ def main():
                 device
             )
 
-            print(f"Epoch {epoch+1}/{num_epochs}")
-            print(f"Train Loss: {train_loss:.4f}, Test Loss: {test_loss:.4f}, Accuracy: {accuracy:.4f}")
+            print(f"Epoch: {epoch + 1}/{epochs} | Train Loss: {train_loss:.4f} | Test Loss: {test_loss:.4f} | Accuracy: {accuracy*100:.2f}% | LR: {optimizer.param_groups[0]['lr']:.6f}")
 
             if accuracy > best_accuracy:
                 best_accuracy = accuracy
                 best_weights = {k: v.clone().detach() for k, v in model.state_dict().items()}
 
-            with open(f"experiments/training_data/apvit_cifar10_{total_patches}.txt", "a") as file:
-                file.write(f"{train_loss},{test_loss},{accuracy}\n")
+            #with open(f"experiments/training_data/apvit_cifar10_{num_patches}.txt", "a") as file:
+                #file.write(f"{train_loss},{test_loss},{accuracy}\n")
 
         print(f"Best Accuracy: {best_accuracy:.4f}")
-        torch.save(best_weights, f"models/apvit_cifar10_{total_patches}.pth")
+        #torch.save(best_weights, f"models/apvit_cifar10_{num_patches}.pth")
 
 if __name__ == "__main__": main()

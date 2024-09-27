@@ -4,7 +4,6 @@
 
 import torch
 import torch.nn as nn
-import torch.nn.init as init
 import numpy as np
 
 from modules.ConvBlock import ConvBlock
@@ -18,7 +17,6 @@ class AdaptivePatching(nn.Module):
         channel_height,
         channel_width,
         embed_dim,
-        pos_embed_dim,
         num_patches,
         patch_size,
         scaling='isotropic', # 'isotropic', 'anisotropic', None
@@ -74,7 +72,7 @@ class AdaptivePatching(nn.Module):
 
         half_channel = channel_height // 2 * channel_width // 2
         self.fc1 = nn.Linear(half_channel, half_channel // 2)
-        self.relu = nn.ReLU(inplace=True)
+        self.relu = nn.ReLU()
 
         num_transform_params = 2
         if scaling == 'anisotropic': num_transform_params += 2
@@ -85,28 +83,6 @@ class AdaptivePatching(nn.Module):
         self.translate_activation = nn.Tanh()
         self.scale_activation = nn.Sigmoid()
         self.rotate_activation = nn.Tanh()
-        self.pos_embed = nn.Linear(2, pos_embed_dim)
-
-        self.patch_embed = nn.Conv2d(
-            in_channels=in_channels,
-            out_channels=embed_dim,
-            kernel_size=patch_size,
-            stride=patch_size,
-            padding=0
-        )
-
-        self.init_weights()
-
-    def init_weights(self):
-        init.xavier_uniform_(self.fc1.weight)
-        init.zeros_(self.fc1.bias)
-        init.xavier_uniform_(self.fc2.weight)
-        init.zeros_(self.fc2.bias)
-        init.xavier_uniform_(self.pos_embed.weight)
-        init.zeros_(self.pos_embed.bias)
-        init.xavier_uniform_(self.patch_embed.weight)
-        if self.patch_embed.bias is not None:
-            init.zeros_(self.patch_embed.bias)
 
     def forward(self, x):
         b, c, h, w = x.size()
@@ -181,7 +157,4 @@ class AdaptivePatching(nn.Module):
             align_corners=False
         ).view(-1, c, self.patch_size, self.patch_size)
 
-        patch_embeds = self.patch_embed(patches).view(b, self.num_patches, self.embed_dim)
-        pos_embeds = self.pos_embed(translate_params)
-
-        return patch_embeds, pos_embeds
+        return patches, translate_params
