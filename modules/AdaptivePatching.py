@@ -21,15 +21,24 @@ class AdaptivePatching(nn.Module):
         pos_embed_dim,
         num_patches,
         patch_size,
-        max_scale=0.3
-    ):
+        scaling='isotropic', # 'isotropic', 'anisotropic', None
+        max_scale=0.3, # max 0.7071 if rotating=True, else max 1
+        rotating=True
+        ):
         super(AdaptivePatching, self).__init__()
-        assert max_scale <= 0.7071, 'Max scale greater than 0.7071 will cause some rotations to exceed bounds'
+        assert scaling in ['isotropic', 'anisotropic', None], 'Scaling must be one of "isotropic", "anisotropic", or None'
+        if rotating and scaling:
+            assert max_scale <= 0.7071, 'Max scale greater than 0.7071 will cause some rotations to exceed bounds'
+        elif scaling:
+            assert max_scale <= 1, 'Max scale greater than 1 will cause some patches to exceed bounds'
+
         self.in_channels = in_channels
         self.num_patches = num_patches
         self.patch_size = patch_size
-        self.max_scale = max_scale
         self.embed_dim = embed_dim
+        self.scaling = scaling
+        self.max_scale = max_scale
+        self.rotating = rotating
 
         self.conv1 = ConvBlock(
             in_channels=in_channels,
@@ -66,7 +75,12 @@ class AdaptivePatching(nn.Module):
         half_channel = channel_height // 2 * channel_width // 2
         self.fc1 = nn.Linear(half_channel, half_channel // 2)
         self.relu = nn.ReLU(inplace=True)
-        self.fc2 = nn.Linear(half_channel // 2, 5)
+
+        num_transform_params = 2
+        if scaling == 'anisotropic': num_transform_params += 2
+        if scaling == 'isotropic': num_transform_params += 1
+        if rotating: num_transform_params += 1
+        self.fc2 = nn.Linear(half_channel // 2, num_transform_params)
 
         self.translate_activation = nn.Tanh()
         self.scale_activation = nn.Sigmoid()
@@ -107,12 +121,33 @@ class AdaptivePatching(nn.Module):
         transform_params = self.relu(transform_params)
         transform_params = self.fc2(transform_params)
 
-        translate_params = self.translate_activation(transform_params[:, :, :2])
-        scale_params = self.scale_activation(transform_params[:, :, 2:4]) * self.max_scale
-        rotate_params = self.rotate_activation(transform_params[:, :, 4]) * np.pi
+        param_num = 2
+        translate_params = transform_params[:, :, :param_num]
+        if self.scaling == 'anisotropic':
+            scale_params = transform_params[:, :, param_num:param_num+2]
+            param_num += 2
+        elif self.scaling == 'isotropic':
+            scale_params = transform_params[:, :, param_num:param_num+1]
+            param_num += 1
+        if self.rotating:
+            rotate_params = transform_params[:, :, param_num:param_num+1]
 
-        cos_theta = torch.cos(rotate_params)
-        sin_theta = torch.sin(rotate_params)
+        translate_params = self.translate_activation(translate_params)
+        if self.scaling:
+            scale_params = self.scale_activation(scale_params) * self.max_scale
+            if self.scaling == 'isotropic':
+                scale_params = scale_params.repeat(1, 1, 2)
+        else:
+            scale_params = torch.tensor([self.patch_size / w, self.patch_size / h], device=x.device)
+            scale_params = scale_params.view(1, 1, 2).expand(b, self.num_patches, 2)
+
+        if self.rotating:
+            rotate_params = self.rotate_activation(rotate_params) * np.pi
+        else:
+            rotate_params = torch.zeros(b, self.num_patches, 1, device=x.device)
+
+        cos_theta = torch.cos(rotate_params).squeeze(-1)
+        sin_theta = torch.sin(rotate_params).squeeze(-1)
 
         x_extent = scale_params[:, :, 0] * torch.abs(cos_theta) + scale_params[:, :, 1] * torch.abs(sin_theta)
         y_extent = scale_params[:, :, 0] * torch.abs(sin_theta) + scale_params[:, :, 1] * torch.abs(cos_theta)
