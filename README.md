@@ -1,3 +1,4 @@
+### README IS CURRENTLY OUTDATED AND WILL BE UPDATED SOON
 
 # Dynamic Patch Selection for Vision Transformers
 
