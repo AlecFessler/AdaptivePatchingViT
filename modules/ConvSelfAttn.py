@@ -14,11 +14,12 @@ class ConvSelfAttn(nn.Module):
         channel_width,
         embed_dim,
         num_heads,
-        dropout=0.1
+        dropout=0.1,
+        stochastic_depth=0.0
     ):
         super(ConvSelfAttn, self).__init__()
         self.encode = nn.Linear(channel_height * channel_width, embed_dim)
-        self.attn = SelfAttn(embed_dim, num_heads, dropout)
+        self.attn = SelfAttn(embed_dim, num_heads, stochastic_depth=stochastic_depth)
         self.decode = nn.Linear(embed_dim, channel_height * channel_width)
         self.activation = nn.GELU()
         self.dropout = nn.Dropout(dropout)
