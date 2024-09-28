@@ -1,6 +1,6 @@
 
+timm
 torch>=2.0
 torchvision
 tqdm
-numpy
 pyyaml

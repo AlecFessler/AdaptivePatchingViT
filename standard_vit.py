@@ -11,38 +11,8 @@ from torch.amp.autocast_mode import autocast
 from torch.optim.lr_scheduler import CosineAnnealingLR, LambdaLR
 from tqdm import tqdm
 import yaml
-from modules.APViT import APViT
+from modules.StandardViTPosAdd import StandardViTPosAdd
 from timm.data import Mixup, create_transform
-
-class APViTCifar10(nn.Module):
-    def __init__(
-        self,
-        num_patches,
-        hidden_channels,
-        attn_embed_dim,
-        num_transformer_layers,
-        stochastic_depth,
-        pos_embed_size,
-        scaling,
-        max_scale,
-        rotating
-    ):
-        super(APViTCifar10, self).__init__()
-        self.vit = APViT(
-            num_patches=num_patches,
-            hidden_channels=hidden_channels,
-            attn_embed_dim=attn_embed_dim,
-            pos_embed_dim=attn_embed_dim,
-            num_transformer_layers=num_transformer_layers,
-            stochastic_depth=stochastic_depth,
-            pos_embed_size=pos_embed_size,
-            scaling=scaling,
-            max_scale=max_scale,
-            rotating=rotating
-        )
-
-    def forward(self, x):
-        return self.vit(x)
 
 def load_config(config_file):
     with open(config_file, "r") as file:
@@ -137,13 +107,13 @@ def train(
         device
     ):
     mixup_fn = Mixup(
-        mixup_alpha=0.8,  # Mixup alpha for DeiT setup
-        cutmix_alpha=1.0,  # CutMix alpha for DeiT setup
-        prob=1.0,  # Probability of applying either
-        switch_prob=0.5,  # Probability to switch between Mixup and CutMix
-        mode='batch',  # Apply augmentations at the batch level
-        label_smoothing=0.1,  # Label smoothing for DeiT
-        num_classes=10  # Assuming CIFAR-10 dataset
+        mixup_alpha=0.8,
+        cutmix_alpha=1.0,
+        prob=1.0,
+        switch_prob=0.5,
+        mode='batch',
+        label_smoothing=0.1,
+        num_classes=10
     )
 
     scaler = GradScaler()
@@ -186,7 +156,6 @@ def main():
     lr_factor = config.get("lr_factor", 512)
     lr = 0.0005 * batch_size / lr_factor
     eta_min = config.get("eta_min", 0.0001)
-    hidden_channels = config.get("hidden_channels", 16)
     attn_embed_dim = config.get("attn_embed_dim", 256)
     num_transformer_layers = config.get("num_transformer_layers", 8)
     stochastic_depth = config.get("stochastic_depth", 0.15)
@@ -196,70 +165,66 @@ def main():
 
     trainloader, testloader = get_dataloaders(batch_size, num_workers=4, augment_magnitude=augment_magnitude, re_prob=re_prob)
 
-    patches_tests = [8, 10, 12, 14, 16]
-    for num_patches in patches_tests:
+    model = StandardViTPosAdd(
+        img_size=32,
+        patch_size=8,
+        in_channels=3,
+        attn_embed_dim=attn_embed_dim,
+        attn_heads=4,
+        num_transformer_layers=num_transformer_layers,
+        stochastic_depth=stochastic_depth
+    ).to(device)
 
-        model = APViTCifar10(
-            num_patches,
-            hidden_channels=hidden_channels,
-            attn_embed_dim=attn_embed_dim,
-            num_transformer_layers=num_transformer_layers,
-            stochastic_depth=stochastic_depth,
-            pos_embed_size=4,
-            scaling='isotropic',
-            max_scale=0.3,
-            rotating=False
-        ).to(device)
+    criterion = nn.CrossEntropyLoss(label_smoothing=label_smoothing)
 
-        criterion = nn.CrossEntropyLoss(label_smoothing=label_smoothing)
+    optimizer = torch.optim.AdamW([
+        {'params': [p for n, p in model.named_parameters() if 'bias' in n], 'weight_decay': 0.0},
+        {'params': [p for n, p in model.named_parameters() if 'bias' not in n], 'weight_decay': weight_decay}
+    ], lr=lr)
 
-        optimizer = torch.optim.AdamW([
-            {'params': [p for n, p in model.named_parameters() if 'bias' in n], 'weight_decay': 0.0},
-            {'params': [p for n, p in model.named_parameters() if 'bias' not in n], 'weight_decay': weight_decay}
-        ], lr=lr)
+    scheduler = CosineAnnealingLR(
+        optimizer,
+        T_max=epochs-warmup_epochs,
+        eta_min=eta_min
+    )
+    warmup_scheduler = LambdaLR(
+        optimizer,
+        lr_lambda=lambda epoch: epoch / warmup_epochs
+    )
 
-        scheduler = CosineAnnealingLR(
+    best_weights = None
+    best_accuracy = 0.0
+
+    for epoch in range(epochs):
+        train_loss = train(
+            model,
+            trainloader,
+            criterion,
             optimizer,
-            T_max=epochs-warmup_epochs,
-            eta_min=eta_min
+            scheduler,
+            warmup_scheduler,
+            warmup_epochs,
+            epoch,
+            device
         )
-        warmup_scheduler = LambdaLR(
-            optimizer,
-            lr_lambda=lambda epoch: epoch / warmup_epochs
+        test_loss, accuracy = evaluate(
+            model,
+            testloader,
+            criterion,
+            device
         )
 
-        best_weights = None
-        best_accuracy = 0.0
+        print(f"Epoch: {epoch + 1}/{epochs} | Train Loss: {train_loss:.4f} | Test Loss: {test_loss:.4f} | Accuracy: {accuracy*100:.2f}% | LR: {optimizer.param_groups[0]['lr']:.6f}")
 
-        for epoch in range(epochs):
-            train_loss = train(
-                model,
-                trainloader,
-                criterion,
-                optimizer,
-                scheduler,
-                warmup_scheduler,
-                warmup_epochs,
-                epoch,
-                device
-            )
-            test_loss, accuracy = evaluate(
-                model,
-                testloader,
-                criterion,
-                device
-            )
+        if accuracy > best_accuracy:
+            best_accuracy = accuracy
+            best_weights = {k: v.clone().detach() for k, v in model.state_dict().items()}
 
-            print(f"Epoch: {epoch + 1}/{epochs} | Train Loss: {train_loss:.4f} | Test Loss: {test_loss:.4f} | Accuracy: {accuracy*100:.2f}% | LR: {optimizer.param_groups[0]['lr']:.6f}")
+        with open("experiments/training_data/standard_vit_cifar10.txt", "a") as file:
+            file.write(f"{train_loss},{test_loss},{accuracy}\n")
 
-            if accuracy > best_accuracy:
-                best_accuracy = accuracy
-                best_weights = {k: v.clone().detach() for k, v in model.state_dict().items()}
+    print(f"Best Accuracy: {best_accuracy:.4f}")
+    torch.save(best_weights, "models/standard_vit_cifar10.pth")
 
-            with open(f"experiments/training_data/apvit_cifar10_{num_patches}.txt", "a") as file:
-                file.write(f"{train_loss},{test_loss},{accuracy}\n")
-
-        print(f"Best Accuracy: {best_accuracy:.4f}")
-        torch.save(best_weights, f"models/apvit_cifar10_{num_patches}.pth")
-
-if __name__ == "__main__": main()
+if __name__ == "__main__":
+    main()

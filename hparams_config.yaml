@@ -4,9 +4,9 @@ epochs: 200
 lr_factor: 512
 warmup_epochs: 5
 weight_decay: 0.000015
-eta_min: 0.00001
-hidden_channels: 20
-attn_embed_dim: 320
+eta_min: 0.0001
+hidden_channels: 16
+attn_embed_dim: 256
 num_transformer_layers: 8
 stochastic_depth: 0.15
 label_smoothing: 0.05

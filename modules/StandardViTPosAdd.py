@@ -16,13 +16,12 @@ class StandardViTPosAdd(nn.Module):
         attn_embed_dim=256,
         attn_heads=4,
         num_transformer_layers=6,
-        dropout=0.1
+        stochastic_depth=0.1
     ):
         super(StandardViTPosAdd, self).__init__()
         self.patch_embed = PatchEmbed(
-            img_size=img_size,
             patch_size=patch_size,
-            in_chans=in_channels,
+            in_channels=in_channels,
             embed_dim=attn_embed_dim
         )
 
@@ -31,7 +30,7 @@ class StandardViTPosAdd(nn.Module):
         self.cls_token = nn.Parameter(torch.randn(1, 1, attn_embed_dim))
 
         self.transformer_layers = nn.ModuleList([
-            SelfAttn(embed_dim=attn_embed_dim, num_heads=attn_heads, dropout=dropout)
+            SelfAttn(embed_dim=attn_embed_dim, num_heads=attn_heads, stochastic_depth=stochastic_depth)
             for _ in range(num_transformer_layers)
         ])
 

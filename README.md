@@ -1,122 +1,95 @@
-### README IS CURRENTLY OUTDATED AND WILL BE UPDATED SOON
-
-# Dynamic Patch Selection for Vision Transformers
+# Adaptive Patching for Vision Transformers
 
 ## Overview
 
-This repository presents an implementation of **Dynamic Patch Selection** for Vision Transformers (ViTs), introducing a novel mechanism that enables a ViT to dynamically focus on the most informative regions of an image. By allowing the model to select patches from varying locations for each input image and embedding these patches' spatial information directly into the positional encodings, the model's learning capabilities are enhanced. The comparison with a standard Vision Transformer evaluates both models on the CIFAR-10 dataset under identical conditions.
+This repository presents an implementation of Adaptive Patching for Vision Transformers (APViT), a novel mechanism that enhances the standard Vision Transformer architecture. APViT utilizes a Spatial Transformer Network (STN) to enable dynamic, content-aware patch selection, allowing the model to focus on the most informative regions of an image. The key innovation lies in applying the STN for adaptive patch sampling in the context of Vision Transformers.
 
-## Key Idea: Dynamic Patch Selection
+Importantly, APViT is designed as a drop-in enhancement for existing Vision Transformer architectures, requiring only two additions:
+1. An Adaptive Patching layer for dynamic patch selection
+2. An interpolation function for positional embeddings
 
-Traditional Vision Transformers divide an image into a fixed grid of patches, treating each patch equally and using fixed positional embeddings. While this approach simplifies the architecture, it may not fully leverage the spatial importance of different image regions, potentially leading to suboptimal performance.
+These modifications seamlessly integrate with standard ViT implementations, maintaining their core structure while introducing adaptive capabilities.
 
-The **Dynamic Patch Selection** mechanism introduces a learnable cropping function that enables the model to focus on the most informative regions dynamically, ignoring less relevant areas. This mechanism also allocates extra compute to important regions, something standard transformers cannot do. Furthermore, the approach offers significant flexibility, allowing the number and size of patches to be set as hyperparameters. This flexibility enables configuring a model to cover less than 100% of the image surface area, improving computational efficiency with only minimal accuracy loss, thanks to intelligent patch selection. Standard transformers do not offer this level of scalability.
+The source code for both the `AdaptivePatching` module and the `InterpolatePosEmbeds` function can be found in the `modules` directory of this repository.
 
-Additionally, the dynamic nature of patch selection introduces inherent stochastic regularization, enhancing the model's ability to generalize.
+## Key Idea: Adaptive Patch Selection
 
-## Visual Comparison: Standard vs Dynamic Patch Selection
+APViT introduces a learnable patch selection mechanism that goes beyond the fixed grid approach of traditional Vision Transformers. This mechanism allows for:
 
-To illustrate the difference between Dynamic Patch Selection and the standard ViT patching, a visual comparison using a sample image from the CIFAR-10 dataset is shown.
+1. Dynamic focus on informative regions: The model learns to prioritize areas of the image that are most relevant to the task at hand.
+2. Flexible patch configuration independent of input image size: Patches can vary in number, size, and location across different inputs.
+3. Potential for improved computational efficiency: By focusing on relevant areas, the model may achieve better performance with fewer computational resources.
+4. Inherent regularization through stochastic patch selection: The dynamic nature of patch selection introduces a form of data augmentation, potentially improving generalization.
 
-- Left: The original input image of a bird from CIFAR-10.
-- Middle: Patches selected by a standard ViT using a fixed grid.
-- Right: Patches dynamically selected by the DpsViT, focusing on informative regions, sorted by their original positions just for visualization purposes.
-
-![Original Image](assets/visual_comparison_original.png)
-![Standard ViT Patches](assets/visual_comparison_standard.png)
-![Dynamic Patch Selection Patches](assets/visual_comparison_dps.png)
-
-Dynamic Patch Selection allows the model to focus on more relevant parts of the image, potentially leading to better feature extraction and classification performance.
-
-## Key Components of Dynamic Patch Selection
+## Key Components of Adaptive Patching
 
 ### 1. Learnable Affine Transformations
 
-- The STN outputs translation parameters for each patch, defining where to sample the patch from the input image.
-- These parameters are passed through a hyperbolic tangent (`tanh`) activation function and scaled to ensure that the sampled patches remain within the image boundaries and adjust based on the relative sizes of the patches and the image.
-- Specifically, the scaling factor is calculated as:
-
-  ```
-  scaling_factor = 1 - (patch size / image size)
-  ```
-
-  The affine transformation matrix used for sampling patches is:
-
-  ```
-  A = [[s, 0, t_x],
-       [0, s, t_y]]
-  ```
-
-  where:
-  - `s` is the ratio of patch size to image size, i.e., `s = patch size / image size`
-  - `t_x, t_y` are the translation parameters for the x and y axes, respectively, scaled appropriately.
+- The Spatial Transformer Network generates transformation parameters for each patch.
+- These parameters define where and how to sample patches from the input image.
+- Transformations can include translation, scaling, and rotation, bounded to ensure valid sampling.
+- Parameters are passed through activation functions and scaled to maintain patch integrity.
 
 ### 2. Dynamic Patch Sampling
 
-- The affine transformations generate grids for sampling patches from the input image using `grid_sample`.
-- Unlike the fixed grid approach, this method allows patches to be sampled from any location within the image. This variability acts as an inherent form of data augmentation and regularization.
-- Patch selection varies across different images and training iterations, enabling the model to explore various spatial configurations and focus on regions most relevant for the task at hand.
+- Affine transformations from the STN are used to sample patches from the input image.
+- This approach allows for flexible patch locations, sizes, and orientations.
+- Patch selection varies across different images and training iterations, enabling the model to explore various spatial configurations.
 
-### 3. Embedding Positional Information
+### 3. Interpolated Positional Embeddings
 
-- Instead of using fixed positional embeddings, the translation parameters generated by the STN are directly embedded as positional encodings.
-- This ensures that positional information is aligned with the dynamically selected patches, maintaining spatial coherence. By integrating positional embeddings with learned translation parameters, the model captures both the content and spatial context of each patch.
+- Positional information is interpolated based on the adaptive patch locations.
+- This ensures spatial coherence with the dynamically selected patches.
+- The interpolation process maintains the spatial context of each patch within the overall image.
 
-### 4. STN Architecture Flexibility
+## Advantages of Adaptive Patching
 
-The architecture of the Spatial Transformer Network (STN) used to generate the translation parameters is highly flexible. For implementing the dynamic patch selection mechanism, the only requirement is that the STN ends with a multi-layer perceptron (MLP) that outputs a 2-dimensional vector corresponding to the translation parameters (`t_x` and `t_y`).
+- **Content-Aware Focus**: The model learns to prioritize informative regions within images, potentially leading to better feature extraction and classification performance.
+- **Flexible Scalability**: Offers flexibility in choosing the number, size, and location of patches, allowing for customization based on the specific task or computational constraints.
+- **Potential for Efficiency**: Allows for selective sampling of the input, potentially reducing computational requirements without significant loss in accuracy.
+- **Enhanced Regularization**: The stochastic nature of patch selection may improve generalization and reduce overfitting.
+- **Easy Integration**: Can be readily incorporated into existing Vision Transformer architectures with minimal modifications.
 
-This flexibility allows for customization according to specific needs, whether preferring a simple network for efficiency or a more complex one for capturing intricate spatial relationships. The key is that the STN effectively learns to output meaningful translation parameters that guide dynamic patch selection.
+## Model Architecture
 
-## Advantages of Dynamic Patch Selection
+The APViT extends the standard Vision Transformer architecture with two key modifications:
 
-- **Adaptive Focus**: The model learns to prioritize informative regions within images, allowing the allocation of extra compute to these areas while ignoring less informative parts.
-- **Flexible Scalability**: The mechanism offers flexibility in choosing the number and size of patches. This allows for more efficient transformers by selecting patches that cover less than 100% of the image surface area, with only minimal accuracy loss due to intelligent patch selection.
-- **Stochastic Regularization**: The stochastic nature of patch selection provides inherent regularization, improving generalization and reducing overfitting.
-- **Efficient Positional Encoding**: Embedding translation parameters simplifies the positional encoding process and aligns positional information with actual patch locations.
+1. An Adaptive Patching module (based on STN) for dynamic patch selection: This module learns to generate affine transformation parameters for each patch.
+2. An interpolation mechanism for positional embeddings: This ensures that positional information accurately reflects the locations of the dynamically selected patches.
 
-Dynamic Patch Selection empowers Vision Transformers to adaptively focus on crucial image regions, leveraging spatial information more effectively and improving overall performance and efficiency.
+These modifications are integrated seamlessly, maintaining the core structure of the Vision Transformer while enhancing its ability to focus on relevant image regions.
 
-## Model Comparison
+## Implementation Details
 
-### Dynamic Patch Selection Vision Transformer
+The core components of APViT can be found in the `modules` directory of this repository:
 
-The Dynamic Patch Selection ViT incorporates the STN for flexible and adaptive patch selection, allowing the model to dynamically focus on varying regions of the image. By embedding the translation parameters as positional encodings, the model maintains spatial awareness aligned with the sampled patches. This design promotes better feature learning and improves efficiency by intelligently allocating computational resources to important regions.
+- `AdaptivePatching.py`: Contains the implementation of the Adaptive Patching module using Spatial Transformer Networks.
+- `InterpolatePosEmbeds.py`: Provides the function for interpolating positional embeddings based on patch locations.
 
-### Standard Vision Transformer
+These modules can be easily integrated into existing Vision Transformer implementations to add adaptive patching capabilities.
 
-The standard ViT serves as a baseline model, utilizing a fixed grid of patches and learned positional embeddings corresponding to predetermined locations. While effective, this approach treats all image regions equally and may not capitalize on the spatial importance of different areas within an image. The comparison highlights the scalability limitations and the less efficient use of computational resources in standard transformers.
+## Visual Comparison
 
-## Results
+To illustrate the difference between Adaptive Patching and the standard ViT patching, a visual comparison using a sample image from the CIFAR-10 dataset is shown.
 
-Both models were evaluated on the CIFAR-10 dataset **without any pretraining**, ensuring a fair comparison by keeping all hyperparameters and model sizes identical.
+- Left: The original input image of a bird from CIFAR-10.
+- Middle: Patches selected by a standard ViT using a fixed grid.
+- Right: Patches adaptively selected by the APViT, focusing on informative regions.
 
-### Performance Metrics
+![Original Image](assets/visual_comparison_original.png)
+![Standard ViT Patches](assets/visual_comparison_standard.png)
+![Adaptive Patching](assets/visual_comparison_dps.png)
 
-- **Dynamic Patch Selection ViT**:
-  - **Highest Achieved Accuracy**: 79.15%
-  - **Training Loss Convergence**: Initially converges slower due to the learning of effective patch selection, but surpasses the standard model in later epochs, achieving lower overall training loss.
-- **Standard ViT**:
-  - **Highest Achieved Accuracy**: 72.85%
-  - **Training Loss Convergence**: Faster initial convergence but settles at a higher overall loss compared to the Dynamic Patch Selection ViT.
+Note: The current visualization only demonstrates translation-based patch selection. Future versions may include scaling and rotation.
 
-### Training Loss Comparison
+## Ongoing Research
 
-The training loss curves for both models are depicted in the figure below.
+This project is part of ongoing research into adaptive mechanisms for vision transformers. Future work may explore:
 
-![Training Loss Curves](assets/training_loss.png)
-
-The Dynamic Patch Selection ViT initially converges slower, likely due to the learning required for effective patch selection. However, it surpasses the standard ViT as training progresses, achieving a lower final loss. This indicates that dynamic patch selection not only helps focus on relevant image regions but also enhances the overall optimization process.
-
-### Accuracy Improvement
-
-The Dynamic Patch Selection ViT outperformed the standard ViT by **6.30%** in terms of highest achieved accuracy on the test set. This improvement underscores the effectiveness of allowing the model to adaptively select patches, leading to better feature representation and generalization.
-
-### Observations
-
-- **Convergence Speed**: While the Dynamic Patch Selection model starts with slower convergence due to the complexity of learning adaptive patch selection, it eventually surpasses the standard model, indicating its long-term learning efficiency.
-- **Generalization**: The inherent variability introduced by dynamic patch selection acts as a form of data augmentation, enhancing the model's generalization capabilities on unseen data.
-- **Model Efficiency**: Despite the additional computations introduced by the STN, the overall model complexity remains comparable to the standard ViT. The performance benefits are achieved without a significant increase in computational overhead.
+- Optimization of the Adaptive Patching module for improved performance and efficiency.
+- Application of APViT to various computer vision tasks beyond image classification.
+- Investigation of the interpretability aspects of adaptive patch selection.
+- Integration with other transformer variants and attention mechanisms.
 
 ## Citations
 

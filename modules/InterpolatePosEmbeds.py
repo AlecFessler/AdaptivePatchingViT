@@ -5,9 +5,38 @@
 import torch
 
 def interpolate_pos_embeds(pos_embeds, coords):
-    num_patches, embedding_dim = pos_embeds.size()
-    grid_size = int(num_patches ** 0.5)
-    assert grid_size * grid_size == num_patches, f"pos_embeds must be a square grid. Got {num_patches} patches."
+    """
+    Interpolate positional embeddings for use with the AdaptivePatching module.
+
+    This function performs bilinear interpolation on a grid of positional embeddings
+    using coordinates provided by the AdaptivePatching module. It enables accurate
+    positional encoding for dynamically selected patches.
+
+    Assumptions:
+    - Input positional embeddings form a square grid
+    - Coordinates are normalized to the range [-1, 1], where (-1, -1) is the
+      top-left corner and (1, 1) is the bottom-right corner of the grid
+
+    Args:
+        pos_embeds (torch.Tensor): Grid of positional embeddings
+        coords (torch.Tensor): Normalized coordinates for interpolation
+
+    Shape:
+        - pos_embeds: (num_embeds, embedding_dim)
+        - coords: (batch_size, num_patches, 2) or (num_points, 2)
+        - Output: (batch_size * num_patches, embedding_dim) or (num_points, embedding_dim)
+
+    Returns:
+        torch.Tensor: Interpolated embeddings for the given coordinates
+
+    Note:
+        This function is typically used after an adaptive patching module to
+        compute appropriate positional embeddings for the selected patches.
+        It ensures that the positional information accurately reflects the
+        patches' locations, even when they don't align with the original grid.
+    """
+    num_embeds, embedding_dim = pos_embeds.size()
+    grid_size = int(num_embeds ** 0.5)
     pos_embeds = pos_embeds.view(grid_size, grid_size, embedding_dim)
 
     coords = coords.view(-1, 2)
