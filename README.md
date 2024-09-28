@@ -2,7 +2,7 @@
 
 ## Overview
 
-This repository presents an implementation of Adaptive Patching for Vision Transformers (APViT), a novel mechanism that enhances the standard Vision Transformer architecture. APViT utilizes a Spatial Transformer Network (STN) to enable dynamic, content-aware patch selection, allowing the model to focus on the most informative regions of an image. The key innovation lies in applying the STN for adaptive patch sampling in the context of Vision Transformers.
+This repository presents an implementation of Adaptive Patching for Vision Transformers (APViT), a novel mechanism that enhances the standard Vision Transformer architecture. APViT utilizes a Spatial Transformer Network (STN) to enable dynamic, content-aware patch selection, allowing the model to focus on the most informative regions of an image. The key innovation lies in applying the STN for adaptive patch sampling in the context of Vision Transformers. The module can be trained end-to-end as STNs enable differentiable spatial transformations. The repository includes the implementation of the Adaptive Patching module and an interpolation function for positional embeddings, which can be easily integrated into existing Vision Transformer implementations.
 
 Importantly, APViT is designed as a drop-in enhancement for existing Vision Transformer architectures, requiring only two additions:
 1. An Adaptive Patching layer for dynamic patch selection
@@ -17,7 +17,7 @@ The source code for both the `AdaptivePatching` module and the `InterpolatePosEm
 APViT introduces a learnable patch selection mechanism that goes beyond the fixed grid approach of traditional Vision Transformers. This mechanism allows for:
 
 1. Dynamic focus on informative regions: The model learns to prioritize areas of the image that are most relevant to the task at hand.
-2. Flexible patch configuration independent of input image size: Patches can vary in number, size, and location across different inputs.
+2. Flexible patch configuration independent of input image size: Patches can vary in position, receptive field, and spatial orientation for each image.
 3. Potential for improved computational efficiency: By focusing on relevant areas, the model may achieve better performance with fewer computational resources.
 4. Inherent regularization through stochastic patch selection: The dynamic nature of patch selection introduces a form of data augmentation, potentially improving generalization.
 
@@ -33,12 +33,12 @@ APViT introduces a learnable patch selection mechanism that goes beyond the fixe
 ### 2. Dynamic Patch Sampling
 
 - Affine transformations from the STN are used to sample patches from the input image.
-- This approach allows for flexible patch locations, sizes, and orientations.
+- This approach allows for flexible patch locations, receptive fields, and orientations.
 - Patch selection varies across different images and training iterations, enabling the model to explore various spatial configurations.
 
 ### 3. Interpolated Positional Embeddings
 
-- Positional information is interpolated based on the adaptive patch locations.
+- Positional information is interpolated based on the translation parameters of the selected patches.
 - This ensures spatial coherence with the dynamically selected patches.
 - The interpolation process maintains the spatial context of each patch within the overall image.
 
@@ -54,7 +54,7 @@ APViT introduces a learnable patch selection mechanism that goes beyond the fixe
 
 The APViT extends the standard Vision Transformer architecture with two key modifications:
 
-1. An Adaptive Patching module (based on STN) for dynamic patch selection: This module learns to generate affine transformation parameters for each patch.
+1. An Adaptive Patching module (based on STN) for dynamic patch selection: This module learns to sample a set of patches using predicted affine transformations.
 2. An interpolation mechanism for positional embeddings: This ensures that positional information accurately reflects the locations of the dynamically selected patches.
 
 These modifications are integrated seamlessly, maintaining the core structure of the Vision Transformer while enhancing its ability to focus on relevant image regions.
@@ -84,12 +84,23 @@ Note: The current visualization only demonstrates translation-based patch select
 
 ## Ongoing Research
 
-This project is part of ongoing research into adaptive mechanisms for vision transformers. Future work may explore:
+The development of Adaptive Patching for Vision Transformers (APViT) remains an active area of research with several promising directions:
 
-- Optimization of the Adaptive Patching module for improved performance and efficiency.
-- Application of APViT to various computer vision tasks beyond image classification.
-- Investigation of the interpretability aspects of adaptive patch selection.
-- Integration with other transformer variants and attention mechanisms.
+1. **Diverse Computer Vision Tasks**: Exploration of APViT in a wider range of computer vision tasks, including:
+   - Multiple object detection
+   - Semantic segmentation
+   These applications will help evaluate the versatility and effectiveness of adaptive patching across different visual understanding problems.
+
+2. **Integration with Pretrained ViTs**: Investigation into incorporating APViT into existing pretrained Vision Transformers. This research aims to understand how adaptive patching can enhance the performance of models that have already learned robust feature representations.
+
+3. **Advanced Transformation Types**: Building on the original Spatial Transformer Networks paper, future work could explore more complex transformations for patch selection, such as:
+   - Projective transformations
+   - 16-point thin plate spline transformations
+   These could potentially allow for even more flexible and powerful patch selection mechanisms.
+
+4. **Large-Scale Image Classification**: An interesting avenue for future research would be applying APViT to large-scale image classification tasks, such as ImageNet, using very large Vision Transformer models. This could provide valuable insights into the scalability and effectiveness of adaptive patching in more challenging and diverse datasets.
+
+Collaborations and contributions from the research community are welcome to further explore these directions and unlock the full potential of adaptive patching in vision transformers.
 
 ## Citations
 

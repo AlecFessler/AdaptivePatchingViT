@@ -150,7 +150,7 @@ def main():
     config = load_config("hparams_config.yaml")
 
     batch_size = config.get("batch_size", 256)
-    epochs = config.get("epochs", 200)
+    epochs = config.get("epochs", 250)
     warmup_epochs = config.get("warmup_epochs", 5)
     weight_decay = config.get("weight_decay", 0.000015)
     lr_factor = config.get("lr_factor", 512)

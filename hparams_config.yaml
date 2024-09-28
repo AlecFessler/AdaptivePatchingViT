@@ -1,6 +1,6 @@
 # hparams_config.yaml
 batch_size: 256
-epochs: 200
+epochs: 250
 lr_factor: 512
 warmup_epochs: 5
 weight_decay: 0.000015
