@@ -6,8 +6,7 @@ import torch
 import torch.nn as nn
 import torchvision
 from torch.utils.data import DataLoader
-from torch.amp.grad_scaler import GradScaler
-from torch.amp.autocast_mode import autocast
+from torch.cuda.amp import GradScaler, autocast
 from torch.optim.lr_scheduler import CosineAnnealingLR, LambdaLR
 from tqdm import tqdm
 import yaml
@@ -124,7 +123,7 @@ def train(
             images, labels = images.to(device), labels.to(device)
             images, labels = mixup_fn(images, labels)
             optimizer.zero_grad()
-            with autocast(device_type=device.type):
+            with autocast():
                 outputs = model(images)
                 loss = criterion(outputs, labels)
             scaler.scale(loss).backward()
@@ -220,11 +219,11 @@ def main():
             best_accuracy = accuracy
             best_weights = {k: v.clone().detach() for k, v in model.state_dict().items()}
 
-        with open("experiments/training_data/standard_vit_cifar10.txt", "a") as file:
-            file.write(f"{train_loss},{test_loss},{accuracy}\n")
+        #with open("experiments/training_data/standard_vit_cifar10.txt", "a") as file:
+            #file.write(f"{train_loss},{test_loss},{accuracy}\n")
 
     print(f"Best Accuracy: {best_accuracy:.4f}")
-    torch.save(best_weights, "models/standard_vit_cifar10.pth")
+    #torch.save(best_weights, "models/standard_vit_cifar10.pth")
 
 if __name__ == "__main__":
     main()
