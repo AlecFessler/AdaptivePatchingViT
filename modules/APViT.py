@@ -111,20 +111,43 @@ class APViT(nn.Module):
         self.norm = nn.LayerNorm(attn_embed_dim)
         self.fc = nn.Linear(attn_embed_dim, 10)
 
+    def hook_fn(self, module, input, output):
+        if isinstance(module, SelfAttn):
+            _, attn_weights = output
+            if not hasattr(self, 'attn_weights'):
+                self.attn_weights = []
+            self.attn_weights.append(attn_weights)
+        if isinstance(module, AdaptivePatching):
+            patches, translate_params, scale_params, rotate_params = output
+            self.selected_patches = patches
+            self.translate_params = translate_params
+            self.scale_params = scale_params
+            self.rotate_params = rotate_params
+
+    def setup_hooks(self):
+        self.hooks = []
+        for layer in self.transformer_layers:
+            self.hooks.append(layer.register_forward_hook(self.hook_fn))
+        self.hooks.append(self.adaptive_patches.register_forward_hook(self.hook_fn))
+
+    def remove_hooks(self):
+        for hook in self.hooks:
+            hook.remove()
+
     def forward(self, x): # (B, C, H, W)
         batch_size = x.size(0)
-        patches, patch_coords = self.adaptive_patches(x) # (B, N, C, P, P), (B, N, 2)
+        patches, translate_params, _, _ = self.adaptive_patches(x) # (B, N, C, P, P), (B, N, 2)
         patches = patches.view(-1, patches.size(2), patches.size(3), patches.size(4)) # (B * N, C, P, P)
         x = self.patch_embed(patches) # (B * N, embed_dim)
         x = x.view(batch_size, self.num_patches, -1) # (B, N, embed_dim)
-        pos_embeds = interpolate_pos_embeds(self.pos_embeds, patch_coords) # (B * N, embed_dim)
+        pos_embeds = interpolate_pos_embeds(self.pos_embeds, translate_params) # (B * N, embed_dim)
         pos_embeds = pos_embeds.view(batch_size, self.num_patches, -1) # (B, N, embed_dim)
         x = x + pos_embeds # (B, N, embed_dim)
         cls_tokens = self.cls_token.expand(x.size(0), -1, -1) # (B, 1, embed_dim)
         x = torch.cat((cls_tokens, x), dim=1) # (B, N + 1, embed_dim)
         x = x.permute(1, 0, 2).contiguous() # (N + 1, B, embed_dim)
         for layer in self.transformer_layers:
-            x = layer(x) # (N + 1, B, embed_dim)
+            x, _ = layer(x) # (N + 1, B, embed_dim)
         x = x[0] # (B, embed_dim)
         x = self.norm(x) # (B, embed_dim)
         x = self.fc(x) # (B, 10)

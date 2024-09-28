@@ -36,7 +36,7 @@ class ConvSelfAttn(nn.Module):
 
         x = x.view(b, c, -1)
         x = self.encode(x)
-        x = self.attn(x, mask)
+        x, _ = self.attn(x, mask)
         x = self.decode(x)
         x = self.activation(x)
         x = self.dropout(x)

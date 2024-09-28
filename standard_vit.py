@@ -107,12 +107,12 @@ def train(
         device
     ):
     mixup_fn = Mixup(
-        mixup_alpha=0.8,
-        cutmix_alpha=1.0,
-        prob=1.0,
+        mixup_alpha=0.5,
+        cutmix_alpha=0.2,
+        prob=0.5,
         switch_prob=0.5,
         mode='batch',
-        label_smoothing=0.1,
+        label_smoothing=0.05,
         num_classes=10
     )
 
@@ -122,7 +122,7 @@ def train(
     with tqdm(train_loader, unit="batch") as tepoch:
         for images, labels in tepoch:
             images, labels = images.to(device), labels.to(device)
-            #images, labels = mixup_fn(images, labels)
+            images, labels = mixup_fn(images, labels)
             optimizer.zero_grad()
             with autocast(device_type=device.type):
                 outputs = model(images)
@@ -150,7 +150,7 @@ def main():
     config = load_config("hparams_config.yaml")
 
     batch_size = config.get("batch_size", 256)
-    epochs = config.get("epochs", 250)
+    epochs = config.get("epochs", 300)
     warmup_epochs = config.get("warmup_epochs", 5)
     weight_decay = config.get("weight_decay", 0.000015)
     lr_factor = config.get("lr_factor", 512)
@@ -175,7 +175,7 @@ def main():
         stochastic_depth=stochastic_depth
     ).to(device)
 
-    criterion = nn.CrossEntropyLoss(label_smoothing=label_smoothing)
+    criterion = nn.CrossEntropyLoss()#label_smoothing=label_smoothing)
 
     optimizer = torch.optim.AdamW([
         {'params': [p for n, p in model.named_parameters() if 'bias' in n], 'weight_decay': 0.0},

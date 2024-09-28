@@ -4,7 +4,6 @@
 
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 
 from modules.ConvBlock import ConvBlock
 from modules.ConvSelfAttn import ConvSelfAttn
@@ -26,9 +25,11 @@ class AdaptivePatching(nn.Module):
     4. Bounded transformation parameters to maintain valid patch sampling
 
     The module outputs both the extracted patches and their corresponding translation
-    parameters. These outputs can be directly used with transformer architectures:
+    parameters. Additionally, scaling and rotation parameters are returned for flexibility/interpretability.
+    These outputs can be directly used with transformer architectures:
     - Patches can be fed into a patch embedding layer
     - Translation parameters can be used to interpolate positional embeddings
+    - Scaling and rotation parameters may be used in the model somehow, or viewed for analysis
 
     Transformation parameters:
     - Translation: Normalized to [-1, 1] and scaled based on patch extent
@@ -52,6 +53,8 @@ class AdaptivePatching(nn.Module):
         - Output:
             - patches: (batch_size, num_patches, in_channels, patch_size, patch_size)
             - translate_params: (batch_size, num_patches, 2)
+            - scale_params: (batch_size, num_patches, 2) if scaling is enabled, else None
+            - rotate_params: (batch_size, num_patches, 1) if rotation is enabled, else None
 
     Note:
         This module assumes the input image is normalized. The output patches maintain
@@ -209,4 +212,4 @@ class AdaptivePatching(nn.Module):
             align_corners=False
         ).view(b, self.num_patches, c, self.patch_size, self.patch_size) # (B, N, C, P, P)
 
-        return patches, translate_params # (B, N, C, P, P), (B, N, 2)
+        return patches, translate_params, scale_params if self.scaling else None, rotate_params if self.rotating else None # (B, N, C, P, P), (B, N, 2), (B, N, 2), (B, N, 1)

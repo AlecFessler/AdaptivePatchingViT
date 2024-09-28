@@ -35,7 +35,7 @@ class SelfAttn(nn.Module):
     def forward(self, x, mask=None):
         residual = x
         x = self.norm(x)
-        attn_output, _ = self.attn(x, x, x, key_padding_mask=mask)
+        attn_output, attn_weights = self.attn(x, x, x, key_padding_mask=mask)
 
         x = x + attn_output
         x = self.norm(x)
@@ -44,4 +44,4 @@ class SelfAttn(nn.Module):
         x_ff = self.activation(x_ff)
         x_ff = self.fc2(x_ff)
 
-        return residual + self.drop_path(x_ff)
+        return residual + self.drop_path(x_ff), attn_weights

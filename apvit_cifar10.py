@@ -5,14 +5,18 @@
 import torch
 import torch.nn as nn
 import torchvision
+import torchvision.transforms as transforms
 from torch.utils.data import DataLoader
 from torch.amp.grad_scaler import GradScaler
 from torch.amp.autocast_mode import autocast
 from torch.optim.lr_scheduler import CosineAnnealingLR, LambdaLR
 from tqdm import tqdm
+import os
 import yaml
 from modules.APViT import APViT
 from timm.data import Mixup, create_transform
+from utils.save_patch_grid import save_patch_grid
+from utils.plot_attn_scores import plot_attention_scores
 
 class APViTCifar10(nn.Module):
     def __init__(
@@ -125,6 +129,62 @@ def evaluate(
 
     return test_loss, accuracy
 
+def evaluate_analysis(model, test_loader, criterion, device, output_dir="./output"):
+    model.eval()
+    model.vit.setup_hooks()
+
+    inputs, labels = next(iter(test_loader))
+    inputs, labels = inputs.to(device), labels.to(device)
+    with torch.no_grad():
+        outputs = model(inputs)
+        loss = criterion(outputs, labels)
+
+    model.vit.remove_hooks()
+
+    attn_weights = model.vit.attn_weights[2:]
+    selected_patches = model.vit.selected_patches
+    translate_params = model.vit.translate_params
+    scale_params = model.vit.scale_params
+    rotate_params = model.vit.rotate_params
+
+    if not os.path.exists(output_dir):
+        os.makedirs(output_dir)
+
+    _, predicted_labels = outputs.max(1)
+
+    for img_num in range(inputs.size(0)):
+        with open(os.path.join(output_dir, f"params_{img_num}.txt"), "w") as file:
+            file.write(f"Image Number: {img_num}\n")
+            file.write(f"Actual Label: {labels[img_num].item()}\n")
+            file.write(f"Predicted Label: {predicted_labels[img_num].item()}\n")
+            file.write(f"Translation Params: {translate_params[img_num].cpu().numpy()}\n")
+            file.write(f"Scale Params: {scale_params[img_num].cpu().numpy()}\n")
+            file.write(f"Rotate Params: {rotate_params[img_num].cpu().numpy()}\n")
+
+        resize = transforms.Resize((256, 256))
+        resized_img = resize(inputs[img_num].cpu())
+        torchvision.utils.save_image(resized_img, os.path.join(output_dir, f"img_{img_num}.png"))
+
+        save_patch_grid(
+            patches=selected_patches[img_num],
+            translation_params=translate_params[img_num],
+            output_path=os.path.join(output_dir, f"grid_{img_num}.png"),
+            channels=inputs.size(1),
+            patch_size=selected_patches.size(-1),
+            resize_dim=(512, 512)
+        )
+
+        plot_attention_scores(
+            attn_weights=[layer[img_num].unsqueeze(0) for layer in attn_weights],
+            patches=selected_patches[img_num].unsqueeze(0),
+            translation_params=translate_params[img_num].unsqueeze(0),
+            patch_size=selected_patches.size(-1),
+            channels=inputs.size(1),
+            rollout=True,
+            output_path=os.path.join(output_dir, f"attention_summary_{img_num}.png"),
+            resize_dim=(64, 64)
+        )
+
 def train(
         model,
         train_loader,
@@ -208,7 +268,7 @@ def main():
             pos_embed_size=4,
             scaling='isotropic',
             max_scale=0.3,
-            rotating=False
+            rotating=True
         ).to(device)
 
         criterion = nn.CrossEntropyLoss(label_smoothing=label_smoothing)
@@ -261,5 +321,41 @@ def main():
 
         print(f"Best Accuracy: {best_accuracy:.4f}")
         torch.save(best_weights, f"models/apvit_cifar10_{num_patches}.pth")
+
+def eval_main():
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    config = load_config("hparams_config.yaml")
+
+    num_patches = 10
+    hidden_channels = config.get("hidden_channels", 16)
+    attn_embed_dim = config.get("attn_embed_dim", 256)
+    num_transformer_layers = config.get("num_transformer_layers", 8)
+    stochastic_depth = config.get("stochastic_depth", 0.15)
+
+    model = APViTCifar10(
+        num_patches,
+        hidden_channels=hidden_channels,
+        attn_embed_dim=attn_embed_dim,
+        num_transformer_layers=num_transformer_layers,
+        stochastic_depth=stochastic_depth,
+        pos_embed_size=4,
+        scaling='isotropic',
+        max_scale=0.3,
+        rotating=True
+    ).to(device)
+
+    pretrained_weights = torch.load("models/apvit_cifar10_10.pth", map_location=device)
+    model.load_state_dict(pretrained_weights)
+
+    _, testloader = get_dataloaders(batch_size=10, num_workers=2)
+
+    criterion = nn.CrossEntropyLoss(label_smoothing=config.get("label_smoothing", 0.05))
+
+    output_dir = "./evaluation_output"
+    evaluate_analysis(model, testloader, criterion, device, output_dir=output_dir)
+
+    print(f"Evaluation complete. Results saved in {output_dir}")
+
+#if __name__ == "__main__": eval_main()
 
 if __name__ == "__main__": main()

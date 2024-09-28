@@ -44,7 +44,7 @@ class StandardViTPosAdd(nn.Module):
         x = torch.cat((cls_tokens, x), dim=1)
         x = x.permute(1, 0, 2).contiguous()
         for layer in self.transformer_layers:
-            x = layer(x)
+            x, _ = layer(x)
         x = x[0]
         x = self.norm(x)
         x = self.fc(x)
