@@ -176,13 +176,9 @@ def evaluate_analysis(model, test_loader, criterion, device, output_dir="./outpu
 
         plot_attention_scores(
             attn_weights=[layer[img_num].unsqueeze(0) for layer in attn_weights],
-            patches=selected_patches[img_num].unsqueeze(0),
-            translation_params=translate_params[img_num].unsqueeze(0),
-            patch_size=selected_patches.size(-1),
-            channels=inputs.size(1),
+            translation_params=translate_params[img_num],
             rollout=True,
-            output_path=os.path.join(output_dir, f"attention_summary_{img_num}.png"),
-            resize_dim=(64, 64)
+            output_path=os.path.join(output_dir, f"attention_summary_{img_num}.png")
         )
 
 def train(
@@ -326,7 +322,7 @@ def eval_main():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     config = load_config("hparams_config.yaml")
 
-    num_patches = 10
+    num_patches = 16
     hidden_channels = config.get("hidden_channels", 16)
     attn_embed_dim = config.get("attn_embed_dim", 256)
     num_transformer_layers = config.get("num_transformer_layers", 8)
@@ -344,18 +340,18 @@ def eval_main():
         rotating=True
     ).to(device)
 
-    pretrained_weights = torch.load("models/apvit_cifar10_10.pth", map_location=device)
+    pretrained_weights = torch.load("models/apvit_cifar10_16.pth", map_location=device)
     model.load_state_dict(pretrained_weights)
 
     _, testloader = get_dataloaders(batch_size=10, num_workers=2)
 
-    criterion = nn.CrossEntropyLoss(label_smoothing=config.get("label_smoothing", 0.05))
+    criterion = nn.CrossEntropyLoss()
 
     output_dir = "./evaluation_output"
     evaluate_analysis(model, testloader, criterion, device, output_dir=output_dir)
 
     print(f"Evaluation complete. Results saved in {output_dir}")
 
-#if __name__ == "__main__": eval_main()
+if __name__ == "__main__": eval_main()
 
-if __name__ == "__main__": main()
+#if __name__ == "__main__": main()
