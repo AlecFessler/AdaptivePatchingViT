@@ -45,7 +45,7 @@ APViT introduces a learnable patch selection mechanism that goes beyond the fixe
 ## Advantages of Adaptive Patching
 
 - **Content-Aware Focus**: The model learns to prioritize informative regions within images, potentially leading to better feature extraction and classification performance.
-- **Flexible Scalability**: Offers flexibility in choosing the number, size, and location of patches, allowing for customization based on the specific task or computational constraints.
+- **Flexible Scalability**: Offers flexibility in choosing the number and size of patches allowing for customization based on the specific task or computational constraints.
 - **Potential for Efficiency**: Allows for selective sampling of the input, potentially reducing computational requirements without significant loss in accuracy.
 - **Enhanced Regularization**: The stochastic nature of patch selection may improve generalization and reduce overfitting.
 - **Easy Integration**: Can be readily incorporated into existing Vision Transformer architectures with minimal modifications.
