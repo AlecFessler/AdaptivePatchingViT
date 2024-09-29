@@ -55,7 +55,7 @@ class APViT(nn.Module):
 
     Shape:
         - Input: (batch_size, in_channels, height, width)
-        - Output: (batch_size, num_classes)
+        - Output: (batch_size, num_classes), (num_transformer_layers, batch_size, num_patches + 1, num_patches + 1)
 
     Note:
         This implementation assumes a classification task with 10 classes. Adjust
@@ -112,11 +112,6 @@ class APViT(nn.Module):
         self.fc = nn.Linear(attn_embed_dim, 10)
 
     def hook_fn(self, module, input, output):
-        if isinstance(module, SelfAttn):
-            _, attn_weights = output
-            if not hasattr(self, 'attn_weights'):
-                self.attn_weights = []
-            self.attn_weights.append(attn_weights)
         if isinstance(module, AdaptivePatching):
             patches, translate_params, scale_params, rotate_params = output
             self.selected_patches = patches
@@ -126,8 +121,6 @@ class APViT(nn.Module):
 
     def setup_hooks(self):
         self.hooks = []
-        for layer in self.transformer_layers:
-            self.hooks.append(layer.register_forward_hook(self.hook_fn))
         self.hooks.append(self.adaptive_patches.register_forward_hook(self.hook_fn))
 
     def remove_hooks(self):
@@ -140,15 +133,24 @@ class APViT(nn.Module):
         patches = patches.view(-1, patches.size(2), patches.size(3), patches.size(4)) # (B * N, C, P, P)
         x = self.patch_embed(patches) # (B * N, embed_dim)
         x = x.view(batch_size, self.num_patches, -1) # (B, N, embed_dim)
+
         pos_embeds = interpolate_pos_embeds(self.pos_embeds, translate_params) # (B * N, embed_dim)
         pos_embeds = pos_embeds.view(batch_size, self.num_patches, -1) # (B, N, embed_dim)
         x = x + pos_embeds # (B, N, embed_dim)
+
         cls_tokens = self.cls_token.expand(x.size(0), -1, -1) # (B, 1, embed_dim)
         x = torch.cat((cls_tokens, x), dim=1) # (B, N + 1, embed_dim)
         x = x.permute(1, 0, 2).contiguous() # (N + 1, B, embed_dim)
-        for layer in self.transformer_layers:
-            x, _ = layer(x) # (N + 1, B, embed_dim)
+
+        num_layers = len(self.transformer_layers)
+        attn_weights = torch.zeros(num_layers, batch_size, self.num_patches + 1, self.num_patches + 1, device=x.device)
+
+        for i, layer in enumerate(self.transformer_layers):
+            x, layer_attn_weights = layer(x) # (N + 1, B, embed_dim), (B, N + 1, N + 1)
+            attn_weights[i] = layer_attn_weights
+
         x = x[0] # (B, embed_dim)
         x = self.norm(x) # (B, embed_dim)
         x = self.fc(x) # (B, 10)
-        return x
+
+        return x, attn_weights, pos_embeds

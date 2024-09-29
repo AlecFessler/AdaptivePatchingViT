@@ -12,6 +12,7 @@ from torch.optim.lr_scheduler import CosineAnnealingLR, LambdaLR
 from tqdm import tqdm
 import yaml
 from modules.APViT import APViT
+from modules.AdaptivePatchLoss import AdaptivePatchLoss
 from timm.data import Mixup, create_transform
 import optuna
 from optuna.exceptions import TrialPruned
@@ -24,6 +25,7 @@ class APViTCifar10(nn.Module):
         attn_embed_dim,
         num_transformer_layers,
         stochastic_depth,
+        pos_embed_size,
         scaling,
         max_scale,
         rotating
@@ -36,6 +38,7 @@ class APViTCifar10(nn.Module):
             pos_embed_dim=attn_embed_dim,
             num_transformer_layers=num_transformer_layers,
             stochastic_depth=stochastic_depth,
+            pos_embed_size=pos_embed_size,
             scaling=scaling,
             max_scale=max_scale,
             rotating=rotating
@@ -106,24 +109,30 @@ def evaluate(
         device,
     ):
     model.eval()
-    running_loss = 0.0
+    running_vit_loss = 0.0
+    running_ap_loss = 0.0
     correct = 0
     total = 0
+
+    ap_criterion, vit_criterion = criterion
 
     with torch.no_grad():
         for inputs, labels in test_loader:
             inputs, labels = inputs.to(device), labels.to(device)
-            outputs = model(inputs)
-            loss = criterion(outputs, labels)
-            running_loss += loss.item()
+            outputs, attn_weights = model(inputs)
+            vit_loss = vit_criterion(outputs, labels)
+            ap_loss = ap_criterion(attn_weights)
+            running_vit_loss += vit_loss.item()
+            running_ap_loss += ap_loss
             _, predicted = outputs.max(1)
             total += labels.size(0)
             correct += predicted.eq(labels).sum().item()
 
     accuracy = correct / total
-    test_loss = running_loss / len(test_loader)
+    vit_test_loss = running_vit_loss / len(test_loader)
+    ap_test_loss = running_ap_loss / len(test_loader)
 
-    return test_loss, accuracy
+    return vit_test_loss, ap_test_loss, accuracy
 
 def train(
         model,
@@ -138,56 +147,74 @@ def train(
         scaler,
         device
     ):
+
     mixup_fn = Mixup(
-        mixup_alpha=0.8,  # Mixup alpha for DeiT setup
-        cutmix_alpha=1.0,  # CutMix alpha for DeiT setup
-        prob=1.0,  # Probability of applying either
-        switch_prob=0.5,  # Probability to switch between Mixup and CutMix
-        mode='batch',  # Apply augmentations at the batch level
-        label_smoothing=0.1,  # Label smoothing for DeiT
-        num_classes=10  # Assuming CIFAR-10 dataset
+        mixup_alpha=0.5,
+        cutmix_alpha=0.2,
+        prob=5.0,
+        switch_prob=0.5,
+        mode='batch',
+        label_smoothing=0.05,
+        num_classes=10
     )
 
-    model.train()
-    running_loss = 0.0
-    optimizer.zero_grad()
-    total_steps = len(train_loader)
+    ap_criterion, vit_criterion = criterion
 
+    model.train()
+    running_vit_loss = 0.0
+    running_ap_loss = 0.0
+    batch_idx = 0
     with tqdm(train_loader, unit="batch") as tepoch:
-        for step, (images, labels) in enumerate(tepoch):
+        for i, (images, labels) in enumerate(tepoch):
+            batch_idx = i
             images, labels = images.to(device), labels.to(device)
             #images, labels = mixup_fn(images, labels)
 
-            with autocast(device_type=device.type):
-                outputs = model(images)
-                loss = criterion(outputs, labels)
-
-            unscaled_loss = loss.item()
-
-            if accumulation_steps > 1:
-                loss = loss / accumulation_steps
-
-            scaler.scale(loss).backward()
-
-            if (step + 1) % accumulation_steps == 0:
-                scaler.step(optimizer)
-                scaler.update()
+            if batch_idx % accumulation_steps == 0:
                 optimizer.zero_grad()
 
-            tepoch.set_postfix(loss=unscaled_loss)
-            running_loss += unscaled_loss
+            with autocast(device_type=device.type):
+                outputs, attn_weights, interpolated_pos_embeds = model(images)
+                fixed_pos_embeds = model.vit.pos_embeds
+                ap_loss = ap_criterion(attn_weights, fixed_pos_embeds, interpolated_pos_embeds)
+                vit_loss = vit_criterion(outputs, labels)
 
-        if total_steps % accumulation_steps != 0:
-            scaler.step(optimizer)
-            scaler.update()
-            optimizer.zero_grad()
+            scaled_ap_loss = ap_loss / accumulation_steps
+            scaled_vit_loss = vit_loss / accumulation_steps
+
+            torch.cuda.empty_cache()
+            scaler.scale(scaled_ap_loss).backward(retain_graph=True)
+            ap_grads = {}
+            for name, param in model.vit.adaptive_patches.named_parameters():
+                if param.grad is not None:
+                    ap_grads[name] = param.grad.clone()
+                    param.grad.zero_()
+
+            torch.cuda.empty_cache()
+            scaler.scale(scaled_vit_loss).backward()
+            for name, param in model.vit.adaptive_patches.named_parameters():
+                if name in ap_grads:
+                    param.grad = ap_grads[name]
+
+            if (batch_idx + 1) % accumulation_steps == 0 or (batch_idx + 1) == len(train_loader):
+                torch.cuda.empty_cache()
+                scaler.step(optimizer)
+                scaler.update()
+
+            tepoch.set_postfix(loss=vit_loss.item())
+            running_vit_loss += vit_loss.item()
+            running_ap_loss += ap_loss
+
+    if (batch_idx + 1) % accumulation_steps != 0 and (batch_idx + 1) < len(train_loader):
+        scaler.step(optimizer)
+        scaler.update()
 
     if epoch < warmup_epochs:
         warmup_scheduler.step()
     else:
         scheduler.step()
 
-    return running_loss / len(train_loader)
+    return running_vit_loss / len(train_loader), running_ap_loss / len(train_loader)
 
 def objective(trial):
     torch.manual_seed(42)
@@ -198,65 +225,114 @@ def objective(trial):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     config = load_config("hparams_config.yaml")
 
+    batch_size = config.get("batch_size", 16)
+    accumulation_steps = config.get("accumulation_steps", 8)
     epochs = config.get("epochs", 100)
-    batch_size = config.get("batch_size", 256)
     warmup_epochs = config.get("warmup_epochs", 5)
+    weight_decay = config.get("weight_decay", 0.00015)
+    lr_factor = config.get("lr_factor", 256)
+    lr = 0.0005 * accumulation_steps * batch_size / lr_factor
+    eta_min = config.get("eta_min", 0.0001)
+    hidden_channels = config.get("hidden_channels", 16)
+    attn_embed_dim = config.get("attn_embed_dim", 256)
+    num_transformer_layers = config.get("num_transformer_layers", 6)
+    stochastic_depth = config.get("stochastic_depth", 0.15)
+    label_smoothing = config.get("label_smoothing", 0.05)
+    re_prob = config.get("re_prob", 0.15)
+    augment_magnitude = config.get("augment_magnitude", 5)
 
-    accumulation_steps = trial.suggest_int("accumulation_steps", 1, 4)
-    lr_factor = trial.suggest_categorical("lr_factor", [256, 512])
-    lr = 0.0005 * batch_size * accumulation_steps / lr_factor
-
-    attn_embed_dim = trial.suggest_int("attn_embed_dim", 128, 512, step=64)
-    num_transformer_layers = trial.suggest_int("num_transformer_layers", 4, 8, step=2)
-    hidden_channels = trial.suggest_int("hidden_channels", 16, 32, step=4)
-    scaling = trial.suggest_categorical("scaling", ['isotropic', 'anisotropic', None])
-    max_scale = trial.suggest_float("max_scale", 0.3, 0.4)
-    rotating = trial.suggest_categorical("rotating", [True, False])
-
-    stochastic_depth = trial.suggest_float("stochastic_depth", 0.0, 0.2)
-    label_smoothing = trial.suggest_float("label_smoothing", 0.0, 0.1)
-    weight_decay = trial.suggest_float("weight_decay", 1e-5, 1e-3, log=True)
-    re_prob = trial.suggest_float("re_prob", 0.0, 0.5)
-    augment_magnitude = trial.suggest_int("augment_magnitude", 1, 9)
-
-    trainloader, testloader = get_dataloaders(batch_size, 4, augment_magnitude, re_prob)
+    trainloader, testloader = get_dataloaders(
+        batch_size,
+        num_workers=4,
+        augment_magnitude=augment_magnitude,
+        re_prob=re_prob
+    )
 
     model = APViTCifar10(
-        num_patches=16,
+        num_patches=12,
         hidden_channels=hidden_channels,
         attn_embed_dim=attn_embed_dim,
         num_transformer_layers=num_transformer_layers,
         stochastic_depth=stochastic_depth,
-        scaling=scaling,
-        max_scale=max_scale,
-        rotating=rotating
+        pos_embed_size=3,
+        scaling=None,
+        max_scale=0.3,
+        rotating=False
     ).to(device)
 
-    criterion = nn.CrossEntropyLoss(label_smoothing=label_smoothing)
+    attn_temperature = trial.suggest_float("attn_temperature", 0.05, 0.5)
+    top_k_focus = trial.suggest_int("top_k_focus", 1, 6)
+    attn_loss_weight = trial.suggest_int("attn_loss_weight", 1, 10, step=1)
+    diversity_loss_weight = trial.suggest_int("diversity_loss_weight", 1, 10, step=1)
+
+    ap_criterion = AdaptivePatchLoss(
+        attn_temperature=attn_temperature,
+        top_k_focus=top_k_focus,
+        attn_loss_weight=attn_loss_weight,
+        diversity_loss_weight=diversity_loss_weight
+    )
+    vit_criterion = nn.CrossEntropyLoss(label_smoothing=label_smoothing)
+    criterion = [ap_criterion, vit_criterion]
+
+    def param_filter(module, condition):
+        return [p for n, p in module.named_parameters() if condition(n)]
+
+    ap_params = param_filter(model.vit.adaptive_patches, lambda n: 'bias' not in n)
+    ap_bias_params = param_filter(model.vit.adaptive_patches, lambda n: 'bias' in n)
+    vit_params = param_filter(model, lambda n: 'vit.adaptive_patches' not in n and 'bias' not in n)
+    vit_bias_params = param_filter(model, lambda n: 'vit.adaptive_patches' not in n and 'bias' in n)
     optimizer = torch.optim.AdamW([
-        {'params': [p for n, p in model.named_parameters() if 'bias' in n], 'weight_decay': 0.0},
-        {'params': [p for n, p in model.named_parameters() if 'bias' not in n], 'weight_decay': weight_decay}
+        {'params': ap_params, 'lr': lr, 'weight_decay': weight_decay},
+        {'params': ap_bias_params, 'lr': lr, 'weight_decay': 0.0},
+        {'params': vit_params, 'lr': lr, 'weight_decay': weight_decay},
+        {'params': vit_bias_params, 'lr': lr, 'weight_decay': 0.0}
     ], lr=lr)
-    scheduler = CosineAnnealingLR(optimizer, T_max=epochs - warmup_epochs, eta_min=1e-6)
-    warmup_scheduler = LambdaLR(optimizer, lr_lambda=lambda epoch: epoch / warmup_epochs)
+
+    scheduler = CosineAnnealingLR(
+        optimizer,
+        T_max=epochs-warmup_epochs,
+        eta_min=eta_min
+    )
+
+    warmup_scheduler = LambdaLR(
+        optimizer,
+        lr_lambda=lambda epoch: epoch / warmup_epochs
+    )
 
     scaler = GradScaler()
+
     best_accuracy = 0.0
 
     for epoch in range(epochs):
-            train_loss = train(model, trainloader, criterion, optimizer, scheduler, warmup_scheduler, warmup_epochs, epoch, accumulation_steps, scaler, device)
-            test_loss, accuracy = evaluate(model, testloader, criterion, device)
+            vit_train_loss, ap_train_loss = train(
+                model,
+                trainloader,
+                criterion,
+                optimizer,
+                scheduler,
+                warmup_scheduler,
+                warmup_epochs,
+                epoch,
+                accumulation_steps,
+                scaler,
+                device
+            )
+            vit_test_loss, ap_test_loss, accuracy = evaluate(
+                model,
+                testloader,
+                criterion,
+                device
+            )
 
             trial.report(accuracy, epoch)
 
-            print(f"Epoch: {epoch + 1}/{epochs} | Train Loss: {train_loss:.4f} | Test Loss: {test_loss:.4f} | Accuracy: {accuracy*100:.2f}% | LR: {optimizer.param_groups[0]['lr']:.6f}")
+            print(f"Epoch: {epoch + 1}/{epochs} | ViT Train Loss: {vit_train_loss:.4f} | Test Loss: {vit_test_loss:.4f} | Accuracy: {accuracy*100:.2f}% | ap_train_loss: {ap_train_loss:.4f}, ap_test_loss: {ap_test_loss:.4f}, | LR: {optimizer.param_groups[0]['lr']:.6f}")
 
             if trial.should_prune():
                 raise TrialPruned()
 
             if accuracy > best_accuracy:
                 best_accuracy = accuracy
-
 
     return best_accuracy
 
@@ -267,7 +343,7 @@ def main():
         interval_steps=1
     )
 
-    study = optuna.create_study(direction="maximize", pruner=pruner, study_name="APViT_Cifar10", storage="sqlite:///APViT_Cifar10.db", load_if_exists=True)
+    study = optuna.create_study(direction="maximize", pruner=pruner, study_name="APViT_Cifar10_AP_HPARAMS", storage="sqlite:///APViT_Cifar10_AP_HPARAMS.db", load_if_exists=True)
     study.optimize(objective, n_trials=50)
 
     print("Best trial:")
