@@ -305,7 +305,7 @@ def main():
         re_prob=re_prob
     )
 
-    patches_tests = [12]#, 14, 12, 10, 8]
+    patches_tests = [16, 14, 12, 10, 8]
     for num_patches in patches_tests:
 
         model = APViTCifar10(
@@ -314,7 +314,7 @@ def main():
             attn_embed_dim=attn_embed_dim,
             num_transformer_layers=num_transformer_layers,
             stochastic_depth=stochastic_depth,
-            pos_embed_size=3,
+            pos_embed_size=4,
             scaling=None,
             max_scale=0.3,
             rotating=False
@@ -323,6 +323,7 @@ def main():
         ap_criterion = AdaptivePatchLoss(
             attn_temperature=1.0,
             top_k_focus=3,
+            rand_samples=4,
             attn_loss_weight=1.0,
             diversity_loss_weight=1.0
         )
@@ -409,7 +410,7 @@ def eval_main():
         attn_embed_dim=attn_embed_dim,
         num_transformer_layers=num_transformer_layers,
         stochastic_depth=stochastic_depth,
-        pos_embed_size=3,
+        pos_embed_size=4,
         scaling=None,
         max_scale=0.3,
         rotating=False

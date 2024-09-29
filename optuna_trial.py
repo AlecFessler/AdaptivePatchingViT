@@ -228,8 +228,8 @@ def objective(trial):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     config = load_config("hparams_config.yaml")
 
-    batch_size = config.get("batch_size", 64)
-    accumulation_steps = config.get("accumulation_steps", 4)
+    batch_size = config.get("batch_size", 128)
+    accumulation_steps = config.get("accumulation_steps", 2)
     epochs = config.get("epochs", 100)
     warmup_epochs = config.get("warmup_epochs", 5)
     weight_decay = config.get("weight_decay", 0.00015)
@@ -252,12 +252,12 @@ def objective(trial):
     )
 
     model = APViTCifar10(
-        num_patches=12,
+        num_patches=16,
         hidden_channels=hidden_channels,
         attn_embed_dim=attn_embed_dim,
         num_transformer_layers=num_transformer_layers,
         stochastic_depth=stochastic_depth,
-        pos_embed_size=3,
+        pos_embed_size=4,
         scaling=None,
         max_scale=0.3,
         rotating=False
@@ -273,10 +273,11 @@ def objective(trial):
     ap_criterion = AdaptivePatchLoss(
         attn_temperature=attn_temperature,
         top_k_focus=top_k_focus,
+        rand_samples=4,
         attn_loss_weight=attn_loss_weight,
         diversity_loss_weight=diversity_loss_weight
     )
-    vit_criterion = nn.CrossEntropyLoss(label_smoothing=label_smoothing)
+    vit_criterion = nn.CrossEntropyLoss()
     criterion = [ap_criterion, vit_criterion]
 
     def param_filter(module, condition):

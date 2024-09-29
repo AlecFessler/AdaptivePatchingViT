@@ -1,4 +1,0 @@
-attn_loss_weight: 2.5
-attn_temperature: 0.7932966576249919
-diversity_loss_weight: 5.0
-top_k_focus: 5
