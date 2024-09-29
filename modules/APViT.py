@@ -143,11 +143,12 @@ class APViT(nn.Module):
         x = x.permute(1, 0, 2).contiguous() # (N + 1, B, embed_dim)
 
         num_layers = len(self.transformer_layers)
-        attn_weights = torch.zeros(num_layers, batch_size, self.num_patches + 1, self.num_patches + 1, device=x.device)
+        attn_weights = torch.zeros(batch_size, self.num_patches + 1, self.num_patches + 1, device=x.device)
 
         for i, layer in enumerate(self.transformer_layers):
             x, layer_attn_weights = layer(x) # (N + 1, B, embed_dim), (B, N + 1, N + 1)
-            attn_weights[i] = layer_attn_weights
+            if i == num_layers - 1:
+                attn_weights = layer_attn_weights
 
         x = x[0] # (B, embed_dim)
         x = self.norm(x) # (B, embed_dim)

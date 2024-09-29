@@ -205,10 +205,9 @@ def train(
     mixup_fn = Mixup(
         mixup_alpha=0.5,
         cutmix_alpha=0.2,
-        prob=5.0,
+        prob=0.5,
         switch_prob=0.5,
-        mode='batch',
-        label_smoothing=0.05,
+        mode='batch', label_smoothing=0.05,
         num_classes=10
     )
 
@@ -217,58 +216,62 @@ def train(
     model.train()
     running_vit_loss = 0.0
     running_ap_loss = 0.0
-    batch_idx = 0
     with tqdm(train_loader, unit="batch") as tepoch:
         for i, (images, labels) in enumerate(tepoch):
-            batch_idx = i
             images, labels = images.to(device), labels.to(device)
-            #images, labels = mixup_fn(images, labels)
+            images, labels = mixup_fn(images, labels)
 
-            if batch_idx % accumulation_steps == 0:
+            if i % accumulation_steps == 0:
                 optimizer.zero_grad()
+
+            acc_step_pass = i % accumulation_steps == 0
 
             with autocast(device_type=device.type):
                 outputs, attn_weights, interpolated_pos_embeds = model(images)
                 fixed_pos_embeds = model.vit.pos_embeds
-                ap_loss = ap_criterion(attn_weights, fixed_pos_embeds, interpolated_pos_embeds)
                 vit_loss = vit_criterion(outputs, labels)
+                # only calculate AP loss every accumulation_steps
+                if acc_step_pass:
+                    ap_loss = ap_criterion(attn_weights, fixed_pos_embeds, interpolated_pos_embeds)
+                    running_ap_loss += ap_loss
 
-            scaled_ap_loss = ap_loss / accumulation_steps
+
+            # calculate gradients for adaptive patches
+            if acc_step_pass:
+                torch.cuda.empty_cache()
+                scaler.scale(ap_loss).backward(retain_graph=True)
+                ap_grads = {}
+                for name, param in model.vit.adaptive_patches.named_parameters():
+                    if param.grad is not None:
+                        ap_grads[name] = param.grad.clone()
+                        param.grad.zero_()
+
+            # calculate gradients for vision transformer and scale them
+            torch.cuda.empty_cache()
             scaled_vit_loss = vit_loss / accumulation_steps
-
-            torch.cuda.empty_cache()
-            scaler.scale(scaled_ap_loss).backward(retain_graph=True)
-            ap_grads = {}
-            for name, param in model.vit.adaptive_patches.named_parameters():
-                if param.grad is not None:
-                    ap_grads[name] = param.grad.clone()
-                    param.grad.zero_()
-
-            torch.cuda.empty_cache()
             scaler.scale(scaled_vit_loss).backward()
-            for name, param in model.vit.adaptive_patches.named_parameters():
-                if name in ap_grads:
-                    param.grad = ap_grads[name]
 
-            if (batch_idx + 1) % accumulation_steps == 0 or (batch_idx + 1) == len(train_loader):
+            # assign cached gradients to adaptive patches
+            if acc_step_pass:
+                for name, param in model.vit.adaptive_patches.named_parameters():
+                    if name in ap_grads:
+                        param.grad = ap_grads[name]
+
+            # step optimizer every accumulation_steps or at the end of the epoch
+            if (i + 1) % accumulation_steps == 0 or (i + 1) == len(train_loader):
                 torch.cuda.empty_cache()
                 scaler.step(optimizer)
                 scaler.update()
 
-            tepoch.set_postfix(loss=vit_loss.item())
+            tepoch.set_postfix(loss=running_vit_loss / (i + 1))
             running_vit_loss += vit_loss.item()
-            running_ap_loss += ap_loss
-
-    if (batch_idx + 1) % accumulation_steps != 0 and (batch_idx + 1) < len(train_loader):
-        scaler.step(optimizer)
-        scaler.update()
 
     if epoch < warmup_epochs:
         warmup_scheduler.step()
     else:
         scheduler.step()
 
-    return running_vit_loss / len(train_loader), running_ap_loss / len(train_loader)
+    return running_vit_loss / len(train_loader), running_ap_loss / len(train_loader) / accumulation_steps
 
 def main():
     torch.manual_seed(42)
@@ -378,7 +381,7 @@ def main():
                 device
             )
 
-            print(f"Epoch: {epoch + 1}/{epochs} | ViT Train Loss: {vit_train_loss:.4f} | Test Loss: {vit_test_loss:.4f} | Accuracy: {accuracy*100:.2f}% | ap_train_loss: {ap_train_loss:.4f}, ap_test_loss: {ap_test_loss:.4f}, | LR: {optimizer.param_groups[0]['lr']:.6f}")
+            print(f"Epoch: {epoch + 1}/{epochs} | ViT Train Loss: {vit_train_loss:.4f} | ViT Test Loss: {vit_test_loss:.4f} | Accuracy: {accuracy*100:.2f}% | AP Train Loss: {ap_train_loss:.4f}, AP Test Loss: {ap_test_loss:.4f}, | LR: {optimizer.param_groups[0]['lr']:.6f}")
 
             if accuracy > best_accuracy:
                 best_accuracy = accuracy

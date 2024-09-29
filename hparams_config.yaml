@@ -1,6 +1,6 @@
 # hparams_config.yaml
-batch_size: 32
-accumulation_steps: 8
+batch_size: 64
+accumulation_steps: 4
 epochs: 100
 lr_factor: 256
 warmup_epochs: 5

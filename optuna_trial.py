@@ -119,9 +119,10 @@ def evaluate(
     with torch.no_grad():
         for inputs, labels in test_loader:
             inputs, labels = inputs.to(device), labels.to(device)
-            outputs, attn_weights = model(inputs)
+            outputs, attn_weights, interpolated_pos_embeds = model(inputs)
+            fixed_pos_embeds = model.vit.pos_embeds
             vit_loss = vit_criterion(outputs, labels)
-            ap_loss = ap_criterion(attn_weights)
+            ap_loss = ap_criterion(attn_weights, fixed_pos_embeds, interpolated_pos_embeds)
             running_vit_loss += vit_loss.item()
             running_ap_loss += ap_loss
             _, predicted = outputs.max(1)
@@ -151,10 +152,9 @@ def train(
     mixup_fn = Mixup(
         mixup_alpha=0.5,
         cutmix_alpha=0.2,
-        prob=5.0,
+        prob=0.5,
         switch_prob=0.5,
-        mode='batch',
-        label_smoothing=0.05,
+        mode='batch', label_smoothing=0.05,
         num_classes=10
     )
 
@@ -163,58 +163,61 @@ def train(
     model.train()
     running_vit_loss = 0.0
     running_ap_loss = 0.0
-    batch_idx = 0
     with tqdm(train_loader, unit="batch") as tepoch:
         for i, (images, labels) in enumerate(tepoch):
-            batch_idx = i
             images, labels = images.to(device), labels.to(device)
-            #images, labels = mixup_fn(images, labels)
+            images, labels = mixup_fn(images, labels)
 
-            if batch_idx % accumulation_steps == 0:
+            acc_step_pass = i % accumulation_steps == 0
+
+            if acc_step_pass:
                 optimizer.zero_grad()
 
             with autocast(device_type=device.type):
                 outputs, attn_weights, interpolated_pos_embeds = model(images)
                 fixed_pos_embeds = model.vit.pos_embeds
-                ap_loss = ap_criterion(attn_weights, fixed_pos_embeds, interpolated_pos_embeds)
                 vit_loss = vit_criterion(outputs, labels)
+                # only calculate AP loss every accumulation_steps
+                if acc_step_pass:
+                    ap_loss = ap_criterion(attn_weights, fixed_pos_embeds, interpolated_pos_embeds)
+                    running_ap_loss += ap_loss
 
-            scaled_ap_loss = ap_loss / accumulation_steps
+            # calculate gradients for adaptive patches
+            if acc_step_pass:
+                torch.cuda.empty_cache()
+                scaler.scale(ap_loss).backward(retain_graph=True)
+                ap_grads = {}
+                for name, param in model.vit.adaptive_patches.named_parameters():
+                    if param.grad is not None:
+                        ap_grads[name] = param.grad.clone()
+                        param.grad.zero_()
+
+            # calculate gradients for vision transformer and scale them
+            torch.cuda.empty_cache()
             scaled_vit_loss = vit_loss / accumulation_steps
-
-            torch.cuda.empty_cache()
-            scaler.scale(scaled_ap_loss).backward(retain_graph=True)
-            ap_grads = {}
-            for name, param in model.vit.adaptive_patches.named_parameters():
-                if param.grad is not None:
-                    ap_grads[name] = param.grad.clone()
-                    param.grad.zero_()
-
-            torch.cuda.empty_cache()
             scaler.scale(scaled_vit_loss).backward()
-            for name, param in model.vit.adaptive_patches.named_parameters():
-                if name in ap_grads:
-                    param.grad = ap_grads[name]
 
-            if (batch_idx + 1) % accumulation_steps == 0 or (batch_idx + 1) == len(train_loader):
+            # assign cached gradients to adaptive patches
+            if acc_step_pass:
+                for name, param in model.vit.adaptive_patches.named_parameters():
+                    if name in ap_grads:
+                        param.grad = ap_grads[name]
+
+            # step optimizer every accumulation_steps or at the end of the epoch
+            if (i + 1) % accumulation_steps == 0 or (i + 1) == len(train_loader):
                 torch.cuda.empty_cache()
                 scaler.step(optimizer)
                 scaler.update()
 
-            tepoch.set_postfix(loss=vit_loss.item())
+            tepoch.set_postfix(loss=running_vit_loss / (i + 1))
             running_vit_loss += vit_loss.item()
-            running_ap_loss += ap_loss
-
-    if (batch_idx + 1) % accumulation_steps != 0 and (batch_idx + 1) < len(train_loader):
-        scaler.step(optimizer)
-        scaler.update()
 
     if epoch < warmup_epochs:
         warmup_scheduler.step()
     else:
         scheduler.step()
 
-    return running_vit_loss / len(train_loader), running_ap_loss / len(train_loader)
+    return running_vit_loss / len(train_loader), running_ap_loss / len(train_loader) / accumulation_steps
 
 def objective(trial):
     torch.manual_seed(42)
@@ -225,14 +228,14 @@ def objective(trial):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     config = load_config("hparams_config.yaml")
 
-    batch_size = config.get("batch_size", 16)
-    accumulation_steps = config.get("accumulation_steps", 8)
+    batch_size = config.get("batch_size", 64)
+    accumulation_steps = config.get("accumulation_steps", 4)
     epochs = config.get("epochs", 100)
     warmup_epochs = config.get("warmup_epochs", 5)
     weight_decay = config.get("weight_decay", 0.00015)
     lr_factor = config.get("lr_factor", 256)
     lr = 0.0005 * accumulation_steps * batch_size / lr_factor
-    eta_min = config.get("eta_min", 0.0001)
+    eta_min = config.get("eta_min", 0.00015)
     hidden_channels = config.get("hidden_channels", 16)
     attn_embed_dim = config.get("attn_embed_dim", 256)
     num_transformer_layers = config.get("num_transformer_layers", 6)
@@ -260,10 +263,12 @@ def objective(trial):
         rotating=False
     ).to(device)
 
-    attn_temperature = trial.suggest_float("attn_temperature", 0.05, 0.5)
+    attn_temperature = trial.suggest_float("attn_temperature", 0.1, 1.5)
     top_k_focus = trial.suggest_int("top_k_focus", 1, 6)
-    attn_loss_weight = trial.suggest_int("attn_loss_weight", 1, 10, step=1)
-    diversity_loss_weight = trial.suggest_int("diversity_loss_weight", 1, 10, step=1)
+    attn_loss_weight = trial.suggest_float("attn_loss_weight", 0.5, 5.0, step=0.5)
+    diversity_loss_weight = trial.suggest_float("diversity_loss_weight", 1.0, 5.0, step=0.5)
+
+    print(f'Trial: {trial.number} started with\nattn_temperature: {attn_temperature}\ntop_k_focus: {top_k_focus}\nattn_loss_weight: {attn_loss_weight}\ndiversity_loss_weight: {diversity_loss_weight}')
 
     ap_criterion = AdaptivePatchLoss(
         attn_temperature=attn_temperature,
@@ -326,7 +331,7 @@ def objective(trial):
 
             trial.report(accuracy, epoch)
 
-            print(f"Epoch: {epoch + 1}/{epochs} | ViT Train Loss: {vit_train_loss:.4f} | Test Loss: {vit_test_loss:.4f} | Accuracy: {accuracy*100:.2f}% | ap_train_loss: {ap_train_loss:.4f}, ap_test_loss: {ap_test_loss:.4f}, | LR: {optimizer.param_groups[0]['lr']:.6f}")
+            print(f"Epoch: {epoch + 1}/{epochs} | ViT Train Loss: {vit_train_loss:.4f} | ViT Test Loss: {vit_test_loss:.4f} | Accuracy: {accuracy*100:.2f}% | AP Train Loss: {ap_train_loss:.4f}, AP Test Loss: {ap_test_loss:.4f}, | LR: {optimizer.param_groups[0]['lr']:.6f}")
 
             if trial.should_prune():
                 raise TrialPruned()

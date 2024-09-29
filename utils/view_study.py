@@ -2,7 +2,7 @@ import optuna
 from optuna.visualization import plot_optimization_history, plot_param_importances, plot_parallel_coordinate, plot_contour
 
 def visualize_study():
-    study = optuna.load_study(study_name="APViT_Cifar10", storage="sqlite:///APViT_Cifar10.db")
+    study = optuna.load_study(study_name="APViT_Cifar10_AP_HPARAMS", storage="sqlite:///APViT_Cifar10_AP_HPARAMS.db")
 
     print(study.best_params)
 
