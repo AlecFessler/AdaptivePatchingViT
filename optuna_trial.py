@@ -243,6 +243,11 @@ def objective(trial):
     mixup_prob = config.get("mixup_prob", 0.5)
     mixup_switch_prob = config.get("mixup_switch_prob", 0.5)
     label_smoothing = config.get("label_smoothing", 0.05)
+    #attn_temperature = config.get("attn_temperature", 0.5)
+    rand_samples = config.get("rand_samples", 5)
+    #lower_quantile = config.get("lower_quantile", 0.25)
+    #attn_loss_weight = config.get("attn_loss_weight", 1.0)
+    #diversity_loss_weight = config.get("diversity_loss_weight", 1.0)
 
     trainloader, testloader = get_dataloaders(
         batch_size,
@@ -264,20 +269,20 @@ def objective(trial):
     ).to(device)
 
     attn_temperature = trial.suggest_float("attn_temperature", 0.1, 1.5)
-    top_k_focus = trial.suggest_int("top_k_focus", 1, 6)
-    attn_loss_weight = trial.suggest_float("attn_loss_weight", 0.5, 5.0, step=0.5)
-    diversity_loss_weight = trial.suggest_float("diversity_loss_weight", 1.0, 5.0, step=0.5)
+    lower_quantile = trial.suggest_float("lower_quantile", 0.1, 0.5)
+    attn_loss_weight = trial.suggest_float("attn_loss_weight", 0.1, 1.0)
+    diversity_loss_weight = trial.suggest_float("diversity_loss_weight", 0.1, 1.0)
 
     ap_lr = trial.suggest_float("ap_lr", 0.0001, 0.001)
     ap_weight_decay = trial.suggest_float("ap_weight_decay", 1e-5, 1e-2)
     ema_decay = trial.suggest_float("ema_decay", 0.9, 0.999)
 
-    print(f'Trial: {trial.number} started with\nattn_temperature: {attn_temperature}\ntop_k_focus: {top_k_focus}\nattn_loss_weight: {attn_loss_weight}\ndiversity_loss_weight: {diversity_loss_weight}\nap_lr: {ap_lr}\nap_weight_decay: {ap_weight_decay}\nema_decay: {ema_decay}')
+    print(f'Trial: {trial.number} started with\nattn_temperature: {attn_temperature}\nlower_quantile: {lower_quantile}\nattn_loss_weight: {attn_loss_weight}\ndiversity_loss_weight: {diversity_loss_weight}\nap_lr: {ap_lr}\nap_weight_decay: {ap_weight_decay}\nema_decay: {ema_decay}')
 
     ap_criterion = AdaptivePatchLoss(
         attn_temperature=attn_temperature,
-        top_k_focus=top_k_focus,
-        rand_samples=6,
+        rand_samples=rand_samples,
+        lower_quantile=lower_quantile,
         attn_loss_weight=attn_loss_weight,
         diversity_loss_weight=diversity_loss_weight
     )

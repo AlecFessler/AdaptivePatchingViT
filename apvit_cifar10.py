@@ -299,11 +299,11 @@ def main():
     mixup_switch_prob = config.get("mixup_switch_prob", 0.5)
     label_smoothing = config.get("label_smoothing", 0.05)
     ema_decay = config.get("ema_decay", 0.999)
-    attn_temperature = config.get("attn_temperature", 0.1)
-    top_k_focus = config.get("top_k_focus", 4)
-    rand_samples = config.get("rand_samples", 6)
-    attn_loss_weight = config.get("attn_loss_weight", 3.0)
-    diversity_loss_weight = config.get("diversity_loss_weight", 3.0)
+    attn_temperature = config.get("attn_temperature", 0.5)
+    rand_samples = config.get("rand_samples", 5)
+    lower_quantile = config.get("lower_quantile", 0.25)
+    attn_loss_weight = config.get("attn_loss_weight", 1.0)
+    diversity_loss_weight = config.get("diversity_loss_weight", 1.0)
 
     trainloader, testloader = get_dataloaders(
         batch_size,
@@ -329,8 +329,8 @@ def main():
 
         ap_criterion = AdaptivePatchLoss(
             attn_temperature=attn_temperature,
-            top_k_focus=top_k_focus,
             rand_samples=rand_samples,
+            lower_quantile=lower_quantile,
             attn_loss_weight=attn_loss_weight,
             diversity_loss_weight=diversity_loss_weight
         )

@@ -11,11 +11,11 @@ ap_lr: 0.0001
 ema_decay: 0.999
 
 # Adaptive Patching loss
-attn_temperature: 0.1
-top_k_focus: 4
-rand_samples: 6
-attn_loss_weight: 3.0
-diversity_loss_weight: 3.0
+attn_temperature: 0.5
+rand_samples: 5
+lower_quantile: 0.25
+attn_loss_weight: 1.0
+diversity_loss_weight: 1.0
 
 # Model architecture
 hidden_channels: 16
