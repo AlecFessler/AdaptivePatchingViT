@@ -153,4 +153,4 @@ class APViT(nn.Module):
         x = self.norm(x) # (B, embed_dim)
         x = self.fc(x) # (B, 10)
 
-        return x, attn_weights, pos_embeds
+        return x, attn_weights

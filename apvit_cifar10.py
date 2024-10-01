@@ -121,10 +121,9 @@ def evaluate(
     with torch.no_grad():
         for inputs, labels in test_loader:
             inputs, labels = inputs.to(device), labels.to(device)
-            outputs, attn_weights, interpolated_pos_embeds = model(inputs)
-            fixed_pos_embeds = model.vit.pos_embeds
+            outputs, attn_weights = model(inputs)
             vit_loss = vit_criterion(outputs, labels)
-            ap_loss = ap_criterion(attn_weights, fixed_pos_embeds, interpolated_pos_embeds)
+            ap_loss = ap_criterion(attn_weights)
             running_vit_loss += vit_loss.item()
             running_ap_loss += ap_loss
             _, predicted = outputs.max(1)
@@ -199,8 +198,9 @@ def train(
         epoch,
         accumulation_steps,
         scaler,
-        ema_decay,
         mixup_fn,
+        ap_loss_weight,
+        ema_decay,
         device
     ):
 
@@ -214,53 +214,40 @@ def train(
             images, labels = images.to(device), labels.to(device)
             images, labels = mixup_fn(images, labels)
 
-            # zero optimizer to begin next set of mini-batch gradient accumulation
             if i % accumulation_steps == 0:
                 optimizer.zero_grad()
 
-            # forward pass and compute loss for both ViT and Adaptive Patch modules
             with autocast(device_type=device.type):
-                outputs, attn_weights, interpolated_pos_embeds = model(images)
-                fixed_pos_embeds = model.vit.pos_embeds
+                outputs, attn_weights = model(images)
                 vit_loss = vit_criterion(outputs, labels)
-                if torch.isnan(vit_loss).any():
-                    raise ValueError("NaN loss")
-                ap_loss = ap_criterion(attn_weights, fixed_pos_embeds, interpolated_pos_embeds)
-                if torch.isnan(ap_loss).any():
-                    raise ValueError("NaN loss")
+                ap_loss = ap_criterion(attn_weights)
 
-            model.vit.requires_grad = False
-            model.vit.adaptive_patches.requires_grad = True
+            if torch.isnan(vit_loss).any() or torch.isnan(ap_loss).any():
+                raise ValueError("Loss is NaN")
 
-            # Scale loss and backpropagate gradients for adaptive patches
-            scaled_ap_loss = ap_loss / accumulation_steps
-            scaler.scale(scaled_ap_loss).backward(retain_graph=True)
-
-            model.vit.requires_grad = True
-            model.vit.adaptive_patches.requires_grad = False
-
-            # Scale loss and backpropagate gradients for ViT
             scaled_vit_loss = vit_loss / accumulation_steps
-            scaler.scale(scaled_vit_loss).backward()
+            scaler.scale(scaled_vit_loss).backward(retain_graph=True if epoch > warmup_epochs else False)
 
-            # Step optimizer at the end of accumulation steps and update grad scaler
+            if epoch > warmup_epochs:
+                model.vit.requires_grad = False
+                model.vit.adaptive_patches.requires_grad = True
+                scaled_ap_loss = ap_loss / accumulation_steps * ap_loss_weight
+                scaler.scale(scaled_ap_loss).backward()
+                model.vit.requires_grad = True
+
             if (i + 1) % accumulation_steps == 0 or (i + 1) == len(train_loader):
-                # Clone the current adaptive patching weights for EMA
                 ap_weights = {k: v.clone().detach() for k, v in model.vit.adaptive_patches.state_dict().items()}
 
                 scaler.step(optimizer)
                 scaler.update()
 
-                # Update EMA weights for adaptive patches
                 for name, param in model.vit.adaptive_patches.named_parameters():
                     param.data = ema_decay * param.data + (1 - ema_decay) * ap_weights[name]
 
-            # Update progress bar with loss
             tepoch.set_postfix(loss=running_vit_loss / (i + 1))
             running_vit_loss += vit_loss.item()
             running_ap_loss += ap_loss
 
-    # Step appropriate scheduler based on epoch
     if epoch < warmup_epochs:
         warmup_scheduler.step()
     else:
@@ -282,10 +269,8 @@ def main():
     epochs = config.get("epochs", 100)
     warmup_epochs = config.get("warmup_epochs", 5)
     weight_decay = config.get("weight_decay", 0.00015)
-    ap_weight_decay = config.get("ap_weight_decay", 0.0001)
     lr_factor = config.get("lr_factor", 512)
     lr = 0.0005 * accumulation_steps * batch_size / lr_factor
-    ap_lr = config.get("ap_lr", 0.0001)
     eta_min = config.get("eta_min", 0.00015)
     hidden_channels = config.get("hidden_channels", 16)
     attn_embed_dim = config.get("attn_embed_dim", 256)
@@ -298,12 +283,11 @@ def main():
     mixup_prob = config.get("mixup_prob", 0.5)
     mixup_switch_prob = config.get("mixup_switch_prob", 0.5)
     label_smoothing = config.get("label_smoothing", 0.05)
-    ema_decay = config.get("ema_decay", 0.999)
-    attn_temperature = config.get("attn_temperature", 0.5)
-    rand_samples = config.get("rand_samples", 5)
     lower_quantile = config.get("lower_quantile", 0.25)
-    attn_loss_weight = config.get("attn_loss_weight", 1.0)
-    diversity_loss_weight = config.get("diversity_loss_weight", 1.0)
+    ap_loss_weight = config.get("ap_loss_weight", 0.01)
+    ap_lr = config.get("ap_lr", 0.0002)
+    ema_decay = config.get("ema_decay", 0.9)
+    ap_weight_decay = config.get("ap_weight_decay", 0.009)
 
     trainloader, testloader = get_dataloaders(
         batch_size,
@@ -328,11 +312,7 @@ def main():
         ).to(device)
 
         ap_criterion = AdaptivePatchLoss(
-            attn_temperature=attn_temperature,
-            rand_samples=rand_samples,
-            lower_quantile=lower_quantile,
-            attn_loss_weight=attn_loss_weight,
-            diversity_loss_weight=diversity_loss_weight
+            lower_quantile=lower_quantile
         )
         vit_criterion = nn.CrossEntropyLoss()
         criterion = [ap_criterion, vit_criterion]
@@ -377,7 +357,6 @@ def main():
         best_accuracy = 0.0
 
         for epoch in range(epochs):
-
             vit_train_loss, ap_train_loss = train(
                 model,
                 trainloader,
@@ -389,8 +368,9 @@ def main():
                 epoch,
                 accumulation_steps,
                 scaler,
-                ema_decay,
                 mixup_fn,
+                ap_loss_weight,
+                ema_decay,
                 device
             )
             vit_test_loss, ap_test_loss, accuracy = evaluate(
