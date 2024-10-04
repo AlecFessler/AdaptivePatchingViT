@@ -9,64 +9,12 @@ from modules.ConvBlock import ConvBlock
 from modules.ConvSelfAttn import ConvSelfAttn
 
 class AdaptivePatching(nn.Module):
-    """
-    Adaptive patching module for content-aware patch extraction in image processing.
-
-    This module implements a specialized Spatial Transformer Network (STN) to dynamically
-    select and transform patches from an input image. It generates a set of transformation
-    parameters for each patch, including translation and optionally scaling and rotation.
-    These parameters are constrained to ensure all extracted patches remain within the
-    bounds of the input image.
-
-    Key features:
-    1. Content-aware patch selection through learned transformations
-    2. Compatible with patch-based transformer architectures (e.g., Vision Transformer)
-    3. Flexible configuration for isotropic/anisotropic scaling and rotation
-    4. Bounded transformation parameters to maintain valid patch sampling
-
-    The module outputs both the extracted patches and their corresponding translation
-    parameters. Additionally, scaling and rotation parameters are returned for flexibility/interpretability.
-    These outputs can be directly used with transformer architectures:
-    - Patches can be fed into a patch embedding layer
-    - Translation parameters can be used to interpolate positional embeddings
-    - Scaling and rotation parameters may be used in the model somehow, or viewed for analysis
-
-    Transformation parameters:
-    - Translation: Normalized to [-1, 1] and scaled based on patch extent
-    - Scaling (optional): Bounded to [0, max_scale], where max_scale ≤ 0.7071 if rotation is enabled, else max_scale ≤ 1
-    - Rotation (optional): Normalized to [-π, π] for full 360° rotation
-
-    Args:
-        in_channels (int): Number of input image channels
-        hidden_channels (int): Number of hidden channels in the STN
-        channel_height (int): Height of the input image
-        channel_width (int): Width of the input image
-        embed_dim (int): Embedding dimension for self-attention layers
-        num_patches (int): Number of patches to extract
-        patch_size (int): Size of each extracted patch (height and width)
-        scaling (str, optional): Scaling type: 'isotropic', 'anisotropic', or None. Default: 'isotropic'
-        max_scale (float, optional): Maximum scaling factor. Default: 0.3
-        rotating (bool, optional): Enable rotation transformations. Default: True
-
-    Shape:
-        - Input: (batch_size, in_channels, height, width)
-        - Output:
-            - patches: (batch_size, num_patches, in_channels, patch_size, patch_size)
-            - translate_params: (batch_size, num_patches, 2)
-            - scale_params: (batch_size, num_patches, 2) if scaling is enabled, else None
-            - rotate_params: (batch_size, num_patches, 1) if rotation is enabled, else None
-
-    Note:
-        This module assumes the input image is normalized. The output patches maintain
-        the same normalization as the input.
-    """
     def __init__(
         self,
         in_channels,
         hidden_channels,
         channel_height,
         channel_width,
-        embed_dim,
         num_patches,
         patch_size,
         scaling='isotropic', # 'isotropic', 'anisotropic', None
@@ -83,7 +31,6 @@ class AdaptivePatching(nn.Module):
         self.in_channels = in_channels
         self.num_patches = num_patches
         self.patch_size = patch_size
-        self.embed_dim = embed_dim
         self.scaling = scaling
         self.max_scale = max_scale
         self.rotating = rotating
@@ -130,6 +77,53 @@ class AdaptivePatching(nn.Module):
         if rotating: num_transform_params += 1
         self.fc2 = nn.Linear(half_channel // 2, num_transform_params)
 
+    def sample_patches(self, x, transform_params):
+        b, c, h, w = x.size()
+
+        translate_params = transform_params[:, :, :2] # (B, N, 2)
+        scale_params = transform_params[:, :, 2:4] # (B, N, 2)
+        rotate_params = transform_params[:, :, 4] # (B, N, 1)
+
+        cos_theta = torch.cos(rotate_params).squeeze(-1) # (B, N)
+        sin_theta = torch.sin(rotate_params).squeeze(-1) # (B, N)
+
+        # calculate patch extents based on scaling and rotation and clamp to [0, 1]
+        x_extent = scale_params[:, :, 0] * torch.abs(cos_theta) + scale_params[:, :, 1] * torch.abs(sin_theta)
+        y_extent = scale_params[:, :, 0] * torch.abs(sin_theta) + scale_params[:, :, 1] * torch.abs(cos_theta)
+        x_extent = torch.clamp(x_extent, max=1)
+        y_extent = torch.clamp(y_extent, max=1)
+
+        # scale translation parameters by patch extents
+        translation_scale = 1 - torch.stack([x_extent, y_extent], dim=-1)
+        translate_params = translate_params * translation_scale
+
+        # calculate affine transformation matrices
+        ta = scale_params[:, :, 0] * cos_theta
+        tb = -scale_params[:, :, 0] * sin_theta
+        tc = scale_params[:, :, 1] * sin_theta
+        td = scale_params[:, :, 1] * cos_theta
+        tx = translate_params[:, :, 0]
+        ty = translate_params[:, :, 1]
+
+        affine_transforms = torch.stack([
+            torch.stack([ta, tb, tx], dim=-1),
+            torch.stack([tc, td, ty], dim=-1)
+        ], dim=-2) # (B, N, 2, 3)
+
+        grid = nn.functional.affine_grid(
+            affine_transforms.view(-1, 2, 3), # (B*N, 2, 3)
+            [b * self.num_patches, 1, self.patch_size, self.patch_size],
+            align_corners=False
+        ) # (B*N, P, P, 2)
+
+        patches = nn.functional.grid_sample(
+            x.unsqueeze(1).expand(-1, self.num_patches, -1, -1, -1).reshape(-1, c, h, w), # (B*N, C, H, W)
+            grid,
+            align_corners=False
+        ).view(b, self.num_patches, c, self.patch_size, self.patch_size) # (B, N, C, P, P)
+
+        return patches
+
     def forward(self, x): # (B, C, H, W)
         b, c, h, w = x.size()
         features = self.conv1(x) # (B, hidden_channels, H, W)
@@ -174,42 +168,6 @@ class AdaptivePatching(nn.Module):
         else:
             rotate_params = torch.zeros(b, self.num_patches, 1, device=x.device) # (B, N, 1)
 
-        cos_theta = torch.cos(rotate_params).squeeze(-1) # (B, N)
-        sin_theta = torch.sin(rotate_params).squeeze(-1) # (B, N)
+        transform_params = torch.cat([translate_params, scale_params, rotate_params], dim=-1) # (B, N, 5)
 
-        # calculate patch extents based on scaling and rotation and clamp to [0, 1]
-        x_extent = scale_params[:, :, 0] * torch.abs(cos_theta) + scale_params[:, :, 1] * torch.abs(sin_theta)
-        y_extent = scale_params[:, :, 0] * torch.abs(sin_theta) + scale_params[:, :, 1] * torch.abs(cos_theta)
-        x_extent = torch.clamp(x_extent, max=1)
-        y_extent = torch.clamp(y_extent, max=1)
-
-        # scale translation parameters by patch extents
-        translation_scale = 1 - torch.stack([x_extent, y_extent], dim=-1)
-        translate_params = translate_params * translation_scale
-
-        # calculate affine transformation matrices
-        ta = scale_params[:, :, 0] * cos_theta
-        tb = -scale_params[:, :, 0] * sin_theta
-        tc = scale_params[:, :, 1] * sin_theta
-        td = scale_params[:, :, 1] * cos_theta
-        tx = translate_params[:, :, 0]
-        ty = translate_params[:, :, 1]
-
-        affine_transforms = torch.stack([
-            torch.stack([ta, tb, tx], dim=-1),
-            torch.stack([tc, td, ty], dim=-1)
-        ], dim=-2) # (B, N, 2, 3)
-
-        grid = nn.functional.affine_grid(
-            affine_transforms.view(-1, 2, 3), # (B*N, 2, 3)
-            [b * self.num_patches, 1, self.patch_size, self.patch_size],
-            align_corners=False
-        ) # (B*N, P, P, 2)
-
-        patches = nn.functional.grid_sample(
-            x.unsqueeze(1).expand(-1, self.num_patches, -1, -1, -1).reshape(-1, c, h, w), # (B*N, C, H, W)
-            grid,
-            align_corners=False
-        ).view(b, self.num_patches, c, self.patch_size, self.patch_size) # (B, N, C, P, P)
-
-        return patches, translate_params, scale_params if self.scaling else None, rotate_params if self.rotating else None # (B, N, C, P, P), (B, N, 2), (B, N, 2), (B, N, 1)
+        return transform_params # (B, N, 5)

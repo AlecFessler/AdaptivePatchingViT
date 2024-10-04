@@ -2,16 +2,13 @@
 
 # Training dynamics
 batch_size: 256
-epochs: 50
+accumulation_steps: 2
+epochs: 200
 warmup_epochs: 5
 eta_min: 0.00015
 lr_factor: 512
-ap_lr: 0.0002
-ema_decay: 0.9
-
-# Adaptive Patching loss
-lower_quantile: 0.40
-ap_loss_weight: 0.01
+ap_lr: 0.00025
+ema_decay: 0.99
 
 # Model architecture
 hidden_channels: 16
@@ -20,7 +17,7 @@ num_transformer_layers: 6
 
 # Regularization
 weight_decay: 0.00015
-ap_weight_decay: 0.009
+ap_weight_decay: 0.007
 stochastic_depth: 0.15
 re_prob: 0.15
 augment_magnitude: 5

@@ -129,11 +129,13 @@ class APViT(nn.Module):
 
     def forward(self, x): # (B, C, H, W)
         batch_size = x.size(0)
-        patches, translate_params, _, _ = self.adaptive_patches(x) # (B, N, C, P, P), (B, N, 2)
+        transform_params = self.adaptive_patches(x) # (B, N, 5)
+        patches = self.adaptive_patches.sample_patches(x, transform_params) # (B, N, C, P, P)
         patches = patches.view(-1, patches.size(2), patches.size(3), patches.size(4)) # (B * N, C, P, P)
         x = self.patch_embed(patches) # (B * N, embed_dim)
         x = x.view(batch_size, self.num_patches, -1) # (B, N, embed_dim)
 
+        translate_params = transform_params[:, :, :2] # (B, N, 2)
         pos_embeds = interpolate_pos_embeds(self.pos_embeds, translate_params) # (B * N, embed_dim)
         pos_embeds = pos_embeds.view(batch_size, self.num_patches, -1) # (B, N, embed_dim)
         x = x + pos_embeds # (B, N, embed_dim)
@@ -142,15 +144,11 @@ class APViT(nn.Module):
         x = torch.cat((cls_tokens, x), dim=1) # (B, N + 1, embed_dim)
         x = x.permute(1, 0, 2).contiguous() # (N + 1, B, embed_dim)
 
-        num_layers = len(self.transformer_layers)
-
         for i, layer in enumerate(self.transformer_layers):
             x, layer_attn_weights = layer(x) # (N + 1, B, embed_dim), (B, N + 1, N + 1)
-            if i == num_layers - 1:
-                attn_weights = layer_attn_weights[:, 0, 1:] # return just cls to patches of last layer
 
         x = x[0] # (B, embed_dim)
         x = self.norm(x) # (B, embed_dim)
         x = self.fc(x) # (B, 10)
 
-        return x, attn_weights
+        return x

@@ -169,18 +169,11 @@ def train(
                 vit_loss = vit_criterion(outputs, labels)
                 ap_loss = ap_criterion(attn_weights)
 
-            if torch.isnan(vit_loss).any() or torch.isnan(ap_loss).any():
+            if torch.isnan(vit_loss).any(): #or torch.isnan(ap_loss).any():
                 raise TrialPruned()
 
             scaled_vit_loss = vit_loss / accumulation_steps
-            scaler.scale(scaled_vit_loss).backward(retain_graph=True if epoch > warmup_epochs else False)
-
-            if epoch > warmup_epochs:
-                model.vit.requires_grad = False
-                model.vit.adaptive_patches.requires_grad = True
-                scaled_ap_loss = ap_loss / accumulation_steps * ap_loss_weight
-                scaler.scale(scaled_ap_loss).backward()
-                model.vit.requires_grad = True
+            scaler.scale(scaled_vit_loss).backward()
 
             if (i + 1) % accumulation_steps == 0 or (i + 1) == len(train_loader):
                 ap_weights = {k: v.clone().detach() for k, v in model.vit.adaptive_patches.state_dict().items()}
@@ -230,26 +223,20 @@ def objective(trial):
     mixup_prob = config.get("mixup_prob", 0.5)
     mixup_switch_prob = config.get("mixup_switch_prob", 0.5)
     label_smoothing = config.get("label_smoothing", 0.05)
-    #lower_quantile = config.get("lower_quantile", 0.25)
-    #ap_loss_weight = config.get("ap_loss_weight", 0.009)
-    #ap_lr = config.get("ap_lr", 0.0002)
-    #ema_decay = config.get("ema_decay", 0.91)
-    #ap_weight_decay = config.get("ap_weight_decay", 0.009)
+    lower_quantile = config.get("lower_quantile", 0.1)
+    ap_loss_weight = config.get("ap_loss_weight", 0.01)
+    ap_lr = config.get("ap_lr", 0.00015)
+    ema_decay = config.get("ema_decay", 0.99)
+    ap_weight_decay = config.get("ap_weight_decay", 0.007)
 
-    #re_prob = trial.suggest_float("re_prob", 0.1, 0.5, step=0.05)
-    #augment_magnitude = trial.suggest_int("augment_magnitude", 1, 9)
-    #mixup_alpha = trial.suggest_float("mixup_alpha", 0.1, 1.0, step=0.1)
-    #cutmix_alpha = trial.suggest_float("cutmix_alpha", 0.1, 1.0, step=0.1)
-    #mixup_prob = trial.suggest_float("mixup_prob", 0.1, 1.0, step=0.05)
-    #label_smoothing = trial.suggest_float("label_smoothing", 0.01, 0.15, step=0.01)
+    re_prob = trial.suggest_float("re_prob", 0.1, 0.5, step=0.05)
+    augment_magnitude = trial.suggest_int("augment_magnitude", 1, 9)
+    mixup_alpha = trial.suggest_float("mixup_alpha", 0.1, 1.0, step=0.1)
+    cutmix_alpha = trial.suggest_float("cutmix_alpha", 0.1, 1.0, step=0.1)
+    mixup_prob = trial.suggest_float("mixup_prob", 0.1, 1.0, step=0.05)
+    label_smoothing = trial.suggest_float("label_smoothing", 0.01, 0.15, step=0.01)
 
-    lower_quantile = trial.suggest_float("lower_quantile", 0.1, 0.5, step=0.05)
-    ap_loss_weight = trial.suggest_float("ap_loss_weight", 0.01, 0.1, step=0.01)
-    ap_lr = trial.suggest_float("ap_lr", 0.0001, 0.001)
-    ema_decay = trial.suggest_float("ema_decay", 0.9, 0.999)
-    ap_weight_decay = trial.suggest_float("ap_weight_decay", 0.0001, 0.01)
-
-    print(f'Trial started: {trial.number}\nlower_quantile: {lower_quantile}\nap_loss_weight: {ap_loss_weight}\nap_lr: {ap_lr}\nema_decay: {ema_decay}\nap_weight_decay: {ap_weight_decay}')
+    print(f'trial {trial.number}\nre_prob: {re_prob}\naugment_magnitude: {augment_magnitude}\nmixup_alpha: {mixup_alpha}\ncutmix_alpha: {cutmix_alpha}\nmixup_prob: {mixup_prob}\nlabel_smoothing: {label_smoothing}')
 
     trainloader, testloader = get_dataloaders(
         batch_size,
@@ -358,7 +345,7 @@ def main():
     )
 
     study = optuna.create_study(direction="maximize", pruner=pruner, study_name="APViT_Cifar10_AP_HPARAMS_AUGMENT", storage="sqlite:///APViT_Cifar10_AP_HPARAMS_AUGMENT.db", load_if_exists=True)
-    study.optimize(objective, n_trials=50)
+    study.optimize(objective, n_trials=100)
 
     print("Best trial:")
     trial = study.best_trial

@@ -6,33 +6,38 @@ import math
 def plot_attention_scores(
     attn_weights,
     translation_params,
-    rollout=True,
     output_path=None
 ):
     """
     Plots the attention scores for a single image's patches using matplotlib.
     Args:
-        attn_weights (list): List of attention weights for each transformer layer. Each element should be (1, num_heads, num_patches + 1, num_patches + 1).
+        attn_weights (torch.Tensor): Tensor of attention weights. Could be from a single transformer layer.
+                                     Expected shapes: (num_patches,), (num_heads, num_patches, num_patches), or similar.
         translation_params (torch.Tensor): Tensor of translation parameters for patches. Shape: (num_patches, 2).
-        rollout (bool): Whether to perform attention rollout for aggregated attention visualization.
         output_path (str, optional): Path to save the output plot. If None, the plot will be shown directly.
     """
-    # Perform attention rollout if requested
-    if rollout:
-        attn_weights_sum = torch.eye(attn_weights[0].size(-1)).to(attn_weights[0].device)
-        for layer_attn in attn_weights:
-            attn_layer_mean = layer_attn.mean(dim=1)
-            attn_with_residual = attn_layer_mean + torch.eye(attn_layer_mean.size(-1)).to(attn_layer_mean.device)
-            attn_with_residual /= attn_with_residual.sum(dim=-1, keepdim=True)
-            attn_weights_sum = torch.matmul(attn_weights_sum, attn_with_residual)
-        attn_map = attn_weights_sum[0, 1:]  # Get attention from the class token to all patches
+    # Determine how to handle attn_weights based on its shape
+    if attn_weights.dim() == 1:
+        # If attn_weights is 1D, it represents attention scores for the patches
+        attn_map = attn_weights
+    elif attn_weights.dim() == 2:
+        # If attn_weights is 2D, assume it's already averaged
+        attn_map = attn_weights[0]
+    elif attn_weights.dim() == 3:
+        # If attn_weights is 3D, average over heads
+        attn_map = attn_weights.mean(dim=0)[0]
     else:
-        attn_map = attn_weights[-1].mean(dim=1)[0, 1:]  # Use the last layer's average head attention
+        raise ValueError(f"Unexpected attn_weights shape: {attn_weights.shape}")
 
     attn_map = attn_map.cpu().detach().numpy()
 
     # Sort patches using the same heuristic as in save_patch_grid
     sorted_indices = torch.argsort(translation_params[:, 1] * 2 + translation_params[:, 0]).cpu().numpy()
+
+    # Make sure that sorted_indices does not exceed the number of available patches
+    if len(sorted_indices) > attn_map.shape[0]:
+        sorted_indices = sorted_indices[:attn_map.shape[0]]
+
     attn_map = attn_map[sorted_indices]
 
     num_patches = attn_map.shape[0]

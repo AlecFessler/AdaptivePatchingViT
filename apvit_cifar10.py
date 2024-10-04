@@ -112,29 +112,23 @@ def evaluate(
     ):
     model.eval()
     running_vit_loss = 0.0
-    running_ap_loss = 0.0
     correct = 0
     total = 0
-
-    ap_criterion, vit_criterion = criterion
 
     with torch.no_grad():
         for inputs, labels in test_loader:
             inputs, labels = inputs.to(device), labels.to(device)
-            outputs, attn_weights = model(inputs)
-            vit_loss = vit_criterion(outputs, labels)
-            ap_loss = ap_criterion(attn_weights)
+            outputs = model(inputs)
+            vit_loss = criterion(outputs, labels)
             running_vit_loss += vit_loss.item()
-            running_ap_loss += ap_loss
             _, predicted = outputs.max(1)
             total += labels.size(0)
             correct += predicted.eq(labels).sum().item()
 
     accuracy = correct / total
     vit_test_loss = running_vit_loss / len(test_loader)
-    ap_test_loss = running_ap_loss / len(test_loader)
 
-    return vit_test_loss, ap_test_loss, accuracy
+    return vit_test_loss, accuracy
 
 def evaluate_analysis(model, test_loader, device, output_dir="./output"):
     model.eval()
@@ -143,15 +137,14 @@ def evaluate_analysis(model, test_loader, device, output_dir="./output"):
     inputs, labels = next(iter(test_loader))
     inputs, labels = inputs.to(device), labels.to(device)
     with torch.no_grad():
-        outputs, attn_weights, _ = model(inputs)
+        outputs, attention_weights = model(inputs)
 
     model.vit.remove_hooks()
 
-    attn_weights = model.vit.attn_weights[2:]
     selected_patches = model.vit.selected_patches
     translate_params = model.vit.translate_params
-    scale_params = model.vit.scale_params
-    rotate_params = model.vit.rotate_params
+    #scale_params = model.vit.scale_params
+    #rotate_params = model.vit.rotate_params
 
     if not os.path.exists(output_dir):
         os.makedirs(output_dir)
@@ -164,8 +157,8 @@ def evaluate_analysis(model, test_loader, device, output_dir="./output"):
             file.write(f"Actual Label: {labels[img_num].item()}\n")
             file.write(f"Predicted Label: {predicted_labels[img_num].item()}\n")
             file.write(f"Translation Params: {translate_params[img_num].cpu().numpy()}\n")
-            file.write(f"Scale Params: {scale_params[img_num].cpu().numpy()}\n")
-            file.write(f"Rotate Params: {rotate_params[img_num].cpu().numpy()}\n")
+            #file.write(f"Scale Params: {scale_params[img_num].cpu().numpy()}\n")
+            #file.write(f"Rotate Params: {rotate_params[img_num].cpu().numpy()}\n")
 
         resize = transforms.Resize((256, 256))
         resized_img = resize(inputs[img_num].cpu())
@@ -180,10 +173,10 @@ def evaluate_analysis(model, test_loader, device, output_dir="./output"):
             resize_dim=(512, 512)
         )
 
+        # Extract attention weights for the specific image in the batch
         plot_attention_scores(
-            attn_weights=[layer[img_num].unsqueeze(0) for layer in attn_weights],
+            attn_weights=attn_weights[img_num],
             translation_params=translate_params[img_num],
-            rollout=True,
             output_path=os.path.join(output_dir, f"attention_summary_{img_num}.png")
         )
 
@@ -199,15 +192,12 @@ def train(
         accumulation_steps,
         scaler,
         mixup_fn,
-        ap_loss_weight,
         ema_decay,
         device
     ):
 
-    ap_criterion, vit_criterion = criterion
     model.train()
     running_vit_loss = 0.0
-    running_ap_loss = 0.0
 
     with tqdm(train_loader, unit="batch") as tepoch:
         for i, (images, labels) in enumerate(tepoch):
@@ -218,22 +208,14 @@ def train(
                 optimizer.zero_grad()
 
             with autocast(device_type=device.type):
-                outputs, attn_weights = model(images)
-                vit_loss = vit_criterion(outputs, labels)
-                ap_loss = ap_criterion(attn_weights)
+                outputs = model(images)
+                vit_loss = criterion(outputs, labels)
 
-            if torch.isnan(vit_loss).any() or torch.isnan(ap_loss).any():
+            if torch.isnan(vit_loss).any():
                 raise ValueError("Loss is NaN")
 
             scaled_vit_loss = vit_loss / accumulation_steps
-            scaler.scale(scaled_vit_loss).backward(retain_graph=True if epoch > warmup_epochs else False)
-
-            if epoch > warmup_epochs:
-                model.vit.requires_grad = False
-                model.vit.adaptive_patches.requires_grad = True
-                scaled_ap_loss = ap_loss / accumulation_steps * ap_loss_weight
-                scaler.scale(scaled_ap_loss).backward()
-                model.vit.requires_grad = True
+            scaler.scale(scaled_vit_loss).backward()
 
             if (i + 1) % accumulation_steps == 0 or (i + 1) == len(train_loader):
                 ap_weights = {k: v.clone().detach() for k, v in model.vit.adaptive_patches.state_dict().items()}
@@ -246,14 +228,13 @@ def train(
 
             tepoch.set_postfix(loss=running_vit_loss / (i + 1))
             running_vit_loss += vit_loss.item()
-            running_ap_loss += ap_loss
 
     if epoch < warmup_epochs:
         warmup_scheduler.step()
     else:
         scheduler.step()
 
-    return running_vit_loss / len(train_loader), running_ap_loss / len(train_loader)
+    return running_vit_loss / len(train_loader)
 
 def main():
     torch.manual_seed(42)
@@ -283,8 +264,6 @@ def main():
     mixup_prob = config.get("mixup_prob", 0.5)
     mixup_switch_prob = config.get("mixup_switch_prob", 0.5)
     label_smoothing = config.get("label_smoothing", 0.05)
-    lower_quantile = config.get("lower_quantile", 0.25)
-    ap_loss_weight = config.get("ap_loss_weight", 0.01)
     ap_lr = config.get("ap_lr", 0.0002)
     ema_decay = config.get("ema_decay", 0.9)
     ap_weight_decay = config.get("ap_weight_decay", 0.009)
@@ -296,7 +275,7 @@ def main():
         re_prob=re_prob
     )
 
-    patches_tests = [16, 14, 12, 10, 8]
+    patches_tests = [16]#, 14, 12, 10, 8]
     for num_patches in patches_tests:
 
         model = APViTCifar10(
@@ -307,15 +286,11 @@ def main():
             stochastic_depth=stochastic_depth,
             pos_embed_size=4,
             scaling=None,
-            max_scale=0.3,
+            max_scale=0.4,
             rotating=False
         ).to(device)
 
-        ap_criterion = AdaptivePatchLoss(
-            lower_quantile=lower_quantile
-        )
-        vit_criterion = nn.CrossEntropyLoss()
-        criterion = [ap_criterion, vit_criterion]
+        criterion = nn.CrossEntropyLoss()
 
         def param_filter(module, condition):
             return [p for n, p in module.named_parameters() if condition(n)]
@@ -357,7 +332,7 @@ def main():
         best_accuracy = 0.0
 
         for epoch in range(epochs):
-            vit_train_loss, ap_train_loss = train(
+            vit_train_loss = train(
                 model,
                 trainloader,
                 criterion,
@@ -369,25 +344,24 @@ def main():
                 accumulation_steps,
                 scaler,
                 mixup_fn,
-                ap_loss_weight,
                 ema_decay,
                 device
             )
-            vit_test_loss, ap_test_loss, accuracy = evaluate(
+            vit_test_loss, accuracy = evaluate(
                 model,
                 testloader,
                 criterion,
                 device
             )
 
-            print(f"Epoch: {epoch + 1}/{epochs} | ViT Train Loss: {vit_train_loss:.4f} | ViT Test Loss: {vit_test_loss:.4f} | Accuracy: {accuracy*100:.2f}% | AP Train Loss: {ap_train_loss:.4f}, AP Test Loss: {ap_test_loss:.4f}, | LR: {optimizer.param_groups[0]['lr']:.6f}")
+            print(f"Epoch: {epoch + 1}/{epochs} | ViT Train Loss: {vit_train_loss:.4f} | ViT Test Loss: {vit_test_loss:.4f} | Accuracy: {accuracy*100:.2f}% | LR: {optimizer.param_groups[0]['lr']:.6f}")
 
             if accuracy > best_accuracy:
                 best_accuracy = accuracy
                 best_weights = {k: v.clone().detach() for k, v in model.state_dict().items()}
 
-            with open(f"experiments/training_data/apvit_cifar10_{num_patches}.txt", "a") as file:
-                file.write(f"{vit_train_loss},{vit_test_loss},{accuracy}{ap_train_loss},{ap_test_loss}\n")
+            #with open(f"experiments/training_data/apvit_cifar10_{num_patches}.txt", "a") as file:
+                #file.write(f"{vit_train_loss},{vit_test_loss},{accuracy}{ap_train_loss},{ap_test_loss}\n")
 
         print(f"Best Accuracy: {best_accuracy:.4f}")
         torch.save(best_weights, f"models/apvit_cifar10_{num_patches}.pth")
