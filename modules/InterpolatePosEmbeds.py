@@ -23,8 +23,8 @@ def interpolate_pos_embeds(pos_embeds, coords):
 
     Shape:
         - pos_embeds: (num_embeds, embedding_dim)
-        - coords: (batch_size, num_patches, 2) or (num_points, 2)
-        - Output: (batch_size * num_patches, embedding_dim) or (num_points, embedding_dim)
+        - coords: (batch_size, num_patches, 2)
+        - Output: (batch_size, num_patches, embedding_dim)
 
     Returns:
         torch.Tensor: Interpolated embeddings for the given coordinates
@@ -39,7 +39,6 @@ def interpolate_pos_embeds(pos_embeds, coords):
     grid_size = int(num_embeds ** 0.5)
     pos_embeds = pos_embeds.view(grid_size, grid_size, embedding_dim)
 
-    coords = coords.view(-1, 2)
     coords = (coords + 1) * (grid_size - 1) / 2
     coords_floor = torch.floor(coords)
     delta = coords - coords_floor
@@ -47,20 +46,22 @@ def interpolate_pos_embeds(pos_embeds, coords):
     x0y0 = coords_floor.long().clamp(0, grid_size - 1)
     x1y1 = (x0y0 + 1).clamp(0, grid_size - 1)
 
-    w00 = (1 - delta[:, 0:1]) * (1 - delta[:, 1:2])
-    w01 = (1 - delta[:, 0:1]) * delta[:, 1:2]
-    w10 = delta[:, 0:1] * (1 - delta[:, 1:2])
-    w11 = delta[:, 0:1] * delta[:, 1:2]
+    embed00 = pos_embeds[x0y0[..., 1], x0y0[..., 0]]
+    embed01 = pos_embeds[x1y1[..., 1], x0y0[..., 0]]
+    embed10 = pos_embeds[x0y0[..., 1], x1y1[..., 0]]
+    embed11 = pos_embeds[x1y1[..., 1], x1y1[..., 0]]
 
-    embed00 = pos_embeds[x0y0[:, 1], x0y0[:, 0]]
-    embed01 = pos_embeds[x1y1[:, 1], x0y0[:, 0]]
-    embed10 = pos_embeds[x0y0[:, 1], x1y1[:, 0]]
-    embed11 = pos_embeds[x1y1[:, 1], x1y1[:, 0]]
+    delta_x, delta_y = delta[..., 0], delta[..., 1]
+    w00 = (1 - delta_x) * (1 - delta_y)
+    w01 = (1 - delta_x) * delta_y
+    w10 = delta_x * (1 - delta_y)
+    w11 = delta_x * delta_y
 
-    w00 = w00.view(-1, 1)
-    w01 = w01.view(-1, 1)
-    w10 = w10.view(-1, 1)
-    w11 = w11.view(-1, 1)
+    w00 = w00.unsqueeze(-1)
+    w01 = w01.unsqueeze(-1)
+    w10 = w10.unsqueeze(-1)
+    w11 = w11.unsqueeze(-1)
 
-    interpolated = w00 * embed00 + w01 * embed01 + w10 * embed10 + w11 * embed11
+    interpolated = (w00 * embed00) + (w01 * embed01) + (w10 * embed10) + (w11 * embed11)
+
     return interpolated

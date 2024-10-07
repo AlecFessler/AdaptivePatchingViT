@@ -4,7 +4,7 @@
 
 import torch
 
-def perturb_transform_params(transform_params, min_perturb=0.01, max_perturb=0.1, perturb_scale=False, perturb_rotate=False):
+def perturb_transform_params(transform_params, min_perturb=0.01, max_perturb=0.05, perturb_scale=False, perturb_rotate=False):
     # scale params to 0, 1 (scale already is)
     transform_params[:, :, :2] = (transform_params[:, :, :2] + 1) / 2
     transform_params[:, :, 4:5] = (transform_params[:, :, 4:5] / torch.pi + 1) / 2
