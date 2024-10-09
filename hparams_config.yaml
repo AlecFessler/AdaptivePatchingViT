@@ -3,19 +3,13 @@
 # Training dynamics
 batch_size: 256
 accumulation_steps: 2
-epochs: 150
+epochs: 300
 warmup_epochs: 5
-vit_lr:  0.0004
-vit_lr_min: 0.0001
-vit_weight_decay: 0.000015
-ap_lr: 0.0003
-ap_lr_min: 0.0001
-ap_weight_decay: 0.0002
 
 # Model architecture
-hidden_channels: 16
+hidden_channels: 24
 attn_embed_dim: 256
-num_transformer_layers: 6
+num_transformer_layers: 8
 
 # Ap loss
 min_perturb: 0.01
@@ -32,3 +26,4 @@ cutmix_alpha: 0.2
 mixup_prob: 0.5
 mixup_switch_prob: 0.5
 label_smoothing: 0.05
+weight_decay: 0.00015

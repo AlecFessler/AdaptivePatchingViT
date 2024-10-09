@@ -17,9 +17,9 @@ class AdaptivePatching(nn.Module):
         channel_width,
         num_patches,
         patch_size,
-        scaling='isotropic', # 'isotropic', 'anisotropic', None
+        scaling=None, # 'isotropic', 'anisotropic', None
         max_scale=0.3, # max 0.7071 if rotating=True, else max 1
-        rotating=True
+        rotating=False
         ):
         super(AdaptivePatching, self).__init__()
         assert scaling in ['isotropic', 'anisotropic', None], 'Scaling must be one of "isotropic", "anisotropic", or None'
@@ -43,12 +43,13 @@ class AdaptivePatching(nn.Module):
             padding=1,
             bn = False
         )
+        self.norm1 = nn.LayerNorm([channel_height, channel_width])
         self.attn1 = ConvSelfAttn(
             channel_height=channel_height,
             channel_width=channel_width,
             embed_dim=patch_size * patch_size * in_channels,
             num_heads=4,
-            dropout=0.0
+            num_transformer_layers=2
         )
         self.maxpool = nn.MaxPool2d(kernel_size=2, stride=2)
         self.conv2 = ConvBlock(
@@ -59,12 +60,13 @@ class AdaptivePatching(nn.Module):
             padding=1,
             bn = False
         )
+        self.norm2 = nn.LayerNorm([channel_height // 2, channel_width // 2])
         self.attn2 = ConvSelfAttn(
             channel_height=channel_height // 2,
             channel_width=channel_width // 2,
             embed_dim=patch_size * patch_size * in_channels,
             num_heads=4,
-            dropout=0.0
+            num_transformer_layers=2
         )
 
         half_channel = channel_height // 2 * channel_width // 2
@@ -82,7 +84,7 @@ class AdaptivePatching(nn.Module):
 
         translate_params = transform_params[:, :, :2] # (B, N, 2)
         scale_params = transform_params[:, :, 2:4] # (B, N, 2)
-        rotate_params = transform_params[:, :, 4] # (B, N, 1)
+        rotate_params = transform_params[:, :, 4] # (B, N)
 
         cos_theta = torch.cos(rotate_params).squeeze(-1) # (B, N)
         sin_theta = torch.sin(rotate_params).squeeze(-1) # (B, N)
@@ -122,16 +124,18 @@ class AdaptivePatching(nn.Module):
             align_corners=False
         ).view(b, self.num_patches, c, self.patch_size, self.patch_size) # (B, N, C, P, P)
 
-        return patches
+        return patches, affine_transforms
 
-    def forward(self, x): # (B, C, H, W)
+    def forward(self, x):
         b, c, h, w = x.size()
-        features = self.conv1(x) # (B, hidden_channels, H, W)
-        features = self.attn1(features) # (B, hidden_channels, H, W)
-        features = self.maxpool(features) # (B, hidden_channels, H/2, W/2)
-        features = self.conv2(features) # (B, N, H/2, W/2)
-        features = self.attn2(features) # (B, N, H/2, W/2)
-        features = features.view(b, self.num_patches, -1) # (B, N, H/2*W/2)
+        features = self.conv1(x)
+        features = self.norm1(features)
+        features = self.attn1(features)
+        features = self.maxpool(features)
+        features = self.conv2(features)
+        features = self.norm2(features)
+        features = self.attn2(features)
+        features = features.view(b, self.num_patches, -1)
 
         transform_params = self.fc1(features) # (B, N, C*P*P/2)
         transform_params = self.relu(transform_params) # (B, N, C*P*P/2)
@@ -168,6 +172,6 @@ class AdaptivePatching(nn.Module):
         else:
             rotate_params = torch.zeros(b, self.num_patches, 1, device=x.device) # (B, N, 1)
 
-        transform_params = torch.cat([translate_params, scale_params, rotate_params], dim=-1) # (B, N, 5)
+        transform_params = torch.cat([translate_params, scale_params, rotate_params], dim=-1)
 
-        return transform_params # (B, N, 5)
+        return transform_params

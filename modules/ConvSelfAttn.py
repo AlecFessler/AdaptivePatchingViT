@@ -14,12 +14,16 @@ class ConvSelfAttn(nn.Module):
         channel_width,
         embed_dim,
         num_heads,
-        dropout=0.1,
+        num_transformer_layers,
+        dropout=0.0,
         stochastic_depth=0.0
     ):
         super(ConvSelfAttn, self).__init__()
         self.encode = nn.Linear(channel_height * channel_width, embed_dim)
-        self.attn = SelfAttn(embed_dim, num_heads, stochastic_depth=stochastic_depth)
+        self.transformer_layers = nn.ModuleList([
+            SelfAttn(embed_dim=embed_dim, num_heads=num_heads, stochastic_depth=stochastic_depth)
+            for _ in range(num_transformer_layers)
+        ])
         self.decode = nn.Linear(embed_dim, channel_height * channel_width)
         self.activation = nn.GELU()
         self.dropout = nn.Dropout(dropout)
@@ -36,7 +40,8 @@ class ConvSelfAttn(nn.Module):
 
         x = x.view(b, c, -1)
         x = self.encode(x)
-        x, _ = self.attn(x, mask)
+        for layer in self.transformer_layers:
+            x, _ = layer(x, mask)
         x = self.decode(x)
         x = self.activation(x)
         x = self.dropout(x)

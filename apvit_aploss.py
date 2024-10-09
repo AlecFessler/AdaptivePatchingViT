@@ -123,14 +123,13 @@ def evaluate(
         for inputs, labels in test_loader:
             inputs, labels = inputs.to(device), labels.to(device)
             transform_params = model.patch_selector(inputs)
-            patches = model.patch_selector.sample_patches(inputs, transform_params)
+            patches, affine_transforms = model.patch_selector.sample_patches(inputs, transform_params)
             batches, num_patches, channels, patch_size, _ = patches.size()
             patches = patches.reshape(batches, channels, patch_size, patch_size * num_patches)
-            translate_params = transform_params[:, :, :2]
             pos_embeds = model.vit.pos_embeds.squeeze(0)
             interpolated_pos_embeds = interpolate_pos_embeds(
                 pos_embeds,
-                translate_params
+                affine_transforms[..., -1]
             ).reshape(batches, -1, pos_embeds.size(-1))
             outputs = model.vit(patches, interpolated_pos_embeds)
             loss = criterion(outputs, labels).mean()
@@ -158,8 +157,6 @@ def train(
         mixup_fn,
         ap_loss_weight_sched,
         perturbed_patch_sets,
-        ema_model,
-        ema_sched,
         min_perturb,
         max_perturb,
         device
@@ -186,11 +183,11 @@ def train(
 
             with autocast(device_type=device.type):
                 transform_params = model.patch_selector(images)
-                patches = model.patch_selector.sample_patches(images, transform_params)
+                patches, predicted_transforms = model.patch_selector.sample_patches(images, transform_params)
                 batches, num_patches, channels, patch_size, _ = patches.size()
 
                 # generate a set of randomly perturbed transform params and patches
-                perturbed_params = []
+                perturbed_transforms = []
                 perturbed_patches = []
                 for _ in range(perturbed_patch_sets):
                     params = perturb_transform_params(
@@ -198,23 +195,22 @@ def train(
                         min_perturb=min_perturb,
                         max_perturb=max_perturb
                     )
-                    perturbed_params.append(params)
-                    p_patches = model.patch_selector.sample_patches(images, params)
+                    p_patches, transforms = model.patch_selector.sample_patches(images, params)
+                    perturbed_transforms.append(transforms)
                     perturbed_patches.append(p_patches)
 
                 # combine original and perturbed params and patches for batch processing
-                perturbed_params = torch.cat(perturbed_params, dim=0)
-                transform_params = torch.cat([transform_params, perturbed_params], dim=0)
+                perturbed_transforms = torch.cat(perturbed_transforms, dim=0)
+                affine_transforms = torch.cat([predicted_transforms, perturbed_transforms], dim=0)
                 perturbed_patches = torch.cat(perturbed_patches, dim=0)
                 patches = torch.cat([patches, perturbed_patches], dim=0)
                 patches = patches.reshape(batches * (perturbed_patch_sets + 1), channels, patch_size, patch_size * num_patches)
 
                 # interpolate pos embeds for each set of transform params
-                translate_params = transform_params[:, :, :2]
                 pos_embeds = model.vit.pos_embeds
                 interpolated_pos_embeds = interpolate_pos_embeds(
                     pos_embeds,
-                    translate_params
+                    affine_transforms[..., -1]
                 ).reshape(batches * (perturbed_patch_sets + 1), -1, pos_embeds.size(-1))
 
                 # forward pass through the ViT and compute cross entropy without reduction
@@ -251,9 +247,6 @@ def train(
                 vit_scaler.step(vit_opt)
                 vit_scaler.update()
 
-                for ema_param, param in zip(ema_model.parameters(), model.parameters()):
-                    ema_param.data.mul_(ema_sched.current_value).add_((1 - ema_sched.current_value) * param.data)
-
             tepoch.set_postfix(loss=running_vit_loss / (i + 1))
             running_vit_loss += vit_loss.item()
             running_ap_loss += ap_loss.item()
@@ -265,7 +258,6 @@ def train(
         ap_sched.step()
         vit_sched.step()
 
-    ema_sched.step()
     ap_loss_weight_sched.step()
 
     return running_vit_loss / len(train_loader), running_ap_loss / len(train_loader)
@@ -295,12 +287,11 @@ def main():
     mixup_switch_prob = config.get("mixup_switch_prob", 0.5)
     label_smoothing = config.get("label_smoothing", 0.05)
     perturbed_patch_sets = config.get("perturbed_patch_sets", 3)
-    vit_lr = config.get("vit_lr", 0.0004)
-    vit_lr_min = config.get("vit_lr_min", 0.0001)
-    vit_weight_decay = config.get("vit_weight_decay", 0.000015)
-    ap_lr = config.get("ap_lr", 0.0003)
-    ap_lr_min = config.get("ap_lr_min", 0.0001)
-    ap_weight_decay = config.get("ap_weight_decay", 0.0002)
+
+    lr = 0.0005 * batch_size * accumulation_steps / 512
+    lr_min = lr * 0.1
+    weight_decay = 0.00015
+
     min_perturb = config.get("min_perturb", 0.01)
     max_perturb = config.get("max_perturb", 0.05)
     ap_loss_weight = config.get("ap_loss_weight", 1.0)
@@ -312,7 +303,7 @@ def main():
         re_prob=re_prob
     )
 
-    patch_tests = [8, 10, 12, 14, 16]
+    patch_tests = [16]#, 14, 12, 10, 8]
     for num_patches in patch_tests:
         model = APViT(
             num_patches=num_patches,
@@ -326,8 +317,6 @@ def main():
             rotating=False
         ).to(device)
 
-        ema_model = deepcopy(model)
-
         ap_crit = nn.MSELoss()
         vit_crit = nn.CrossEntropyLoss(reduction='none')
         criterions = (ap_crit, vit_crit)
@@ -335,22 +324,22 @@ def main():
         ap_opt = torch.optim.AdamW([
             {'params': [p for n, p in model.named_parameters() if 'bias' not in n]},
             {'params': [p for n, p in model.named_parameters() if 'bias' in n], 'weight_decay': 0.0}
-        ], lr=ap_lr, weight_decay=ap_weight_decay)
+        ], lr=lr, weight_decay=weight_decay)
         vit_opt = torch.optim.AdamW([
             {'params': [p for n, p in model.named_parameters() if 'bias' not in n]},
             {'params': [p for n, p in model.named_parameters() if 'bias' in n], 'weight_decay': 0.0}
-        ], lr=vit_lr, weight_decay=vit_weight_decay)
+        ], lr=lr, weight_decay=weight_decay)
         optimizers = (ap_opt, vit_opt)
 
         ap_sched = CosineAnnealingLR(
             ap_opt,
             T_max=epochs-warmup_epochs,
-            eta_min=ap_lr_min
+            eta_min=lr_min
         )
         vit_sched = CosineAnnealingLR(
             vit_opt,
             T_max=epochs-warmup_epochs,
-            eta_min=vit_lr_min
+            eta_min=lr_min
         )
         schedulers = (ap_sched, vit_sched)
 
@@ -363,13 +352,6 @@ def main():
             lr_lambda=lambda epoch: epoch / warmup_epochs
         )
         warmup_schedulers = (ap_wsched, vit_wsched)
-
-        ema_sched = ValueScheduler(
-            start=0.996,
-            end=1.0,
-            steps=epochs,
-            cosine=True
-        )
 
         ap_loss_weight_sched = ValueScheduler(
             start=0.0,
@@ -406,15 +388,13 @@ def main():
                 mixup_fn,
                 ap_loss_weight_sched,
                 perturbed_patch_sets,
-                ema_model,
-                ema_sched,
                 min_perturb,
                 max_perturb,
                 device
             )
 
             vit_test_loss, accuracy = evaluate(
-                ema_model,
+                model,
                 testloader,
                 criterions[1],
                 device
@@ -424,7 +404,7 @@ def main():
 
             if accuracy > best_accuracy:
                 best_accuracy = accuracy
-                best_weights = ema_model.state_dict()
+                best_weights = deepcopy(model.state_dict())
 
             with open(f"experiments/training_data/apvit_aploss_{num_patches}.txt", "a") as file:
                 file.write(f"{vit_train_loss},{vit_test_loss},{accuracy},{ap_train_loss}\n")

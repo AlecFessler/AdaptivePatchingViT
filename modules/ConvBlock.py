@@ -28,7 +28,7 @@ class ConvBlock(nn.Module):
             self.norm = nn.BatchNorm2d(out_channels)
         else:
             self.norm = nn.Identity()
-        self.activation = nn.ReLU(inplace=True)
+        self.activation = nn.ReLU()
 
         self.init_weights()
 

@@ -5,50 +5,67 @@
 import torch
 import torch.nn as nn
 import torchvision
-import torchvision.transforms as transforms
 from torch.utils.data import DataLoader
 from torch.amp.grad_scaler import GradScaler
 from torch.amp.autocast_mode import autocast
 from torch.optim.lr_scheduler import CosineAnnealingLR, LambdaLR
 from tqdm import tqdm
-import os
 import yaml
 from copy import deepcopy
-from modules.APViT import APViT
-from modules.ValueScheduler import ValueScheduler
+from modules.ViT import ViT
+from modules.AdaptivePatching import AdaptivePatching
+from modules.InterpolatePosEmbeds import interpolate_pos_embeds
 from timm.data import Mixup, create_transform
-from utils.save_patch_grid import save_patch_grid
-from utils.plot_attn_scores import plot_attention_scores
 
-class APViT_E2E(nn.Module):
+class APViT(nn.Module):
     def __init__(
         self,
-        num_patches,
-        hidden_channels,
-        attn_embed_dim,
-        num_transformer_layers,
-        stochastic_depth,
-        pos_embed_size,
-        scaling,
-        max_scale,
-        rotating
+        img_size=32,
+        num_patches=16,
+        patch_size=8,
+        in_channels=3,
+        embed_dim=256,
+        attn_heads=4,
+        num_transformer_layers=6,
+        stochastic_depth=0.1,
+        hidden_channels=16,
+        scaling=None,
+        max_scale=0.3,
+        rotating=False
     ):
-        super(APViT_E2E, self).__init__()
-        self.vit = APViT(
-            num_patches=num_patches,
+        super(APViT, self).__init__()
+        self.patch_selector = AdaptivePatching(
+            in_channels=in_channels,
             hidden_channels=hidden_channels,
-            attn_embed_dim=attn_embed_dim,
-            pos_embed_dim=attn_embed_dim,
-            num_transformer_layers=num_transformer_layers,
-            stochastic_depth=stochastic_depth,
-            pos_embed_size=pos_embed_size,
+            channel_height=img_size,
+            channel_width=img_size,
+            num_patches=num_patches,
+            patch_size=patch_size,
             scaling=scaling,
             max_scale=max_scale,
             rotating=rotating
         )
+        self.vit = ViT(
+            img_size=img_size,
+            num_patches=num_patches,
+            patch_size=patch_size,
+            in_channels=in_channels,
+            embed_dim=embed_dim,
+            attn_heads=attn_heads,
+            num_transformer_layers=num_transformer_layers,
+            stochastic_depth=stochastic_depth
+        )
 
     def forward(self, x):
-        return self.vit(x)
+        transform_params = self.patch_selector(x)
+        patches, affine_transforms = self.patch_selector.sample_patches(x, transform_params)
+        b, n, c, p, _ = patches.size()
+        patches = patches.view(b, c, p, p * n)
+        pos_embeds = interpolate_pos_embeds(
+            self.vit.pos_embeds,
+            affine_transforms[..., -1]
+        )
+        return self.vit(patches, pos_embeds)
 
 def load_config(config_file):
     with open(config_file, "r") as file:
@@ -131,56 +148,6 @@ def evaluate(
 
     return vit_test_loss, accuracy
 
-def evaluate_analysis(model, test_loader, device, output_dir="./output"):
-    model.eval()
-    model.vit.setup_hooks()
-
-    inputs, labels = next(iter(test_loader))
-    inputs, labels = inputs.to(device), labels.to(device)
-    with torch.no_grad():
-        outputs = model(inputs)
-
-    model.vit.remove_hooks()
-
-    selected_patches = model.vit.selected_patches
-    translate_params = model.vit.translate_params
-    #scale_params = model.vit.scale_params
-    #rotate_params = model.vit.rotate_params
-
-    if not os.path.exists(output_dir):
-        os.makedirs(output_dir)
-
-    _, predicted_labels = outputs.max(1)
-
-    for img_num in range(inputs.size(0)):
-        with open(os.path.join(output_dir, f"params_{img_num}.txt"), "w") as file:
-            file.write(f"Image Number: {img_num}\n")
-            file.write(f"Actual Label: {labels[img_num].item()}\n")
-            file.write(f"Predicted Label: {predicted_labels[img_num].item()}\n")
-            file.write(f"Translation Params: {translate_params[img_num].cpu().numpy()}\n")
-            #file.write(f"Scale Params: {scale_params[img_num].cpu().numpy()}\n")
-            #file.write(f"Rotate Params: {rotate_params[img_num].cpu().numpy()}\n")
-
-        resize = transforms.Resize((256, 256))
-        resized_img = resize(inputs[img_num].cpu())
-        torchvision.utils.save_image(resized_img, os.path.join(output_dir, f"img_{img_num}.png"))
-
-        save_patch_grid(
-            patches=selected_patches[img_num],
-            translation_params=translate_params[img_num],
-            output_path=os.path.join(output_dir, f"grid_{img_num}.png"),
-            channels=inputs.size(1),
-            patch_size=selected_patches.size(-1),
-            resize_dim=(512, 512)
-        )
-
-        # Extract attention weights for the specific image in the batch
-        #plot_attention_scores(
-        #    attn_weights=attn_weights[img_num],
-        #    translation_params=translate_params[img_num],
-        #    output_path=os.path.join(output_dir, f"attention_summary_{img_num}.png")
-        #)
-
 def train(
         model,
         train_loader,
@@ -193,8 +160,6 @@ def train(
         accumulation_steps,
         scaler,
         mixup_fn,
-        ema_model,
-        ema_sched,
         device
     ):
 
@@ -223,10 +188,6 @@ def train(
                 scaler.step(optimizer)
                 scaler.update()
 
-                with torch.no_grad():
-                    for ema_param, param in zip(ema_model.parameters(), model.parameters()):
-                        ema_param.data.mul_(ema_sched.current_value).add_((1 - ema_sched.current_value) * param.data)
-
             running_vit_loss += vit_loss.item()
             tepoch.set_postfix(loss=running_vit_loss / (i + 1))
 
@@ -234,8 +195,6 @@ def train(
         warmup_scheduler.step()
     else:
         scheduler.step()
-
-    ema_sched.step()
 
     return running_vit_loss / len(train_loader)
 
@@ -250,22 +209,26 @@ def main():
 
     batch_size = config.get("batch_size", 256)
     accumulation_steps = config.get("accumulation_steps", 2)
-    epochs = config.get("epochs", 100)
+    epochs = config.get("epochs", 300)
     warmup_epochs = config.get("warmup_epochs", 5)
-    hidden_channels = config.get("hidden_channels", 16)
-    attn_embed_dim = config.get("attn_embed_dim", 256)
-    num_transformer_layers = config.get("num_transformer_layers", 6)
+
     stochastic_depth = config.get("stochastic_depth", 0.15)
     re_prob = config.get("re_prob", 0.15)
     augment_magnitude = config.get("augment_magnitude", 5)
     mixup_alpha = config.get("mixup_alpha", 0.5)
     cutmix_alpha = config.get("cutmix_alpha", 0.2)
     mixup_prob = config.get("mixup_prob", 0.5)
+
     mixup_switch_prob = config.get("mixup_switch_prob", 0.5)
     label_smoothing = config.get("label_smoothing", 0.05)
-    lr = config.get("vit_lr", 0.0004)
-    eta_min = config.get("vit_lr_min", 0.0001)
-    weight_decay = config.get("vit_weight_decay", 0.000015)
+
+    lr = 0.0005 * batch_size * accumulation_steps / 512
+    lr_min = lr * 0.1
+    weight_decay = 0.00015
+
+    attn_embed_dim = config.get("attn_embed_dim", 256)
+    num_transformer_layers = config.get("num_transformer_layers", 8)
+    hidden_channels = config.get("hidden_channels", 24)
 
     trainloader, testloader = get_dataloaders(
         batch_size,
@@ -274,22 +237,22 @@ def main():
         re_prob=re_prob
     )
 
-    patches_tests = [16, 14, 12, 10, 8]
-    for num_patches in patches_tests:
-
-        model = APViT_E2E(
-            num_patches,
-            hidden_channels=hidden_channels,
-            attn_embed_dim=attn_embed_dim,
+    patch_nums = [16]#, 14, 12, 10, 8]
+    for num_patches in patch_nums:
+        model = APViT(
+            img_size=32,
+            num_patches=num_patches,
+            patch_size=8,
+            in_channels=3,
+            embed_dim=attn_embed_dim,
+            attn_heads=4,
             num_transformer_layers=num_transformer_layers,
             stochastic_depth=stochastic_depth,
-            pos_embed_size=4,
+            hidden_channels=hidden_channels,
             scaling=None,
-            max_scale=0.4,
+            max_scale=0.3,
             rotating=False
         ).to(device)
-
-        ema_model = deepcopy(model)
 
         criterion = nn.CrossEntropyLoss()
 
@@ -301,19 +264,12 @@ def main():
         scheduler = CosineAnnealingLR(
             optimizer,
             T_max=epochs-warmup_epochs,
-            eta_min=eta_min
+            eta_min=lr_min
         )
 
         warmup_scheduler = LambdaLR(
             optimizer,
             lr_lambda=lambda epoch: epoch / warmup_epochs
-        )
-
-        ema_sched = ValueScheduler(
-            start=0.996,
-            end=1.0,
-            steps=epochs,
-            cosine=True
         )
 
         scaler = GradScaler()
@@ -343,61 +299,25 @@ def main():
                 accumulation_steps,
                 scaler,
                 mixup_fn,
-                ema_model,
-                ema_sched,
                 device
             )
             vit_test_loss, accuracy = evaluate(
-                ema_model,
+                model,
                 testloader,
                 criterion,
                 device
             )
 
-            print(f"Epoch: {epoch + 1}/{epochs} | ViT Train Loss: {vit_train_loss:.4f} | ViT Test Loss: {vit_test_loss:.4f} | Accuracy: {accuracy*100:.2f}% | LR: {optimizer.param_groups[0]['lr']:.6f}")
+            print(f"Epoch: {epoch + 1}/{epochs} | ViT Train Loss: {vit_train_loss:.4f} | ViT Test Loss: {vit_test_loss:.4f} | Accuracy: {accuracy*100:.2f}%")
 
             if accuracy > best_accuracy:
                 best_accuracy = accuracy
-                best_weights = ema_model.state_dict()
+                best_weights = deepcopy(model.state_dict())
 
-            with open(f"experiments/training_data/apvit_e2e_{num_patches}.txt", "a") as file:
+            with open(f"experiments/training_data/apvit_{num_patches}.txt", "a") as file:
                 file.write(f"{vit_train_loss},{vit_test_loss},{accuracy}\n")
 
         print(f"Best Accuracy: {best_accuracy:.4f}")
-        torch.save(best_weights, f"models/apvit_e2e_{num_patches}.pth")
-
-def eval_main():
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    config = load_config("hparams_config.yaml")
-
-    num_patches = 16
-    hidden_channels = config.get("hidden_channels", 16)
-    attn_embed_dim = config.get("attn_embed_dim", 256)
-    num_transformer_layers = config.get("num_transformer_layers", 8)
-    stochastic_depth = config.get("stochastic_depth", 0.15)
-
-    model = APViT_E2E(
-        num_patches,
-        hidden_channels=hidden_channels,
-        attn_embed_dim=attn_embed_dim,
-        num_transformer_layers=num_transformer_layers,
-        stochastic_depth=stochastic_depth,
-        pos_embed_size=4,
-        scaling=None,
-        max_scale=0.3,
-        rotating=False
-    ).to(device)
-
-    pretrained_weights = torch.load("models/apvit_cifar10_16.pth", map_location=device)
-    model.load_state_dict(pretrained_weights)
-
-    _, testloader = get_dataloaders(batch_size=10, num_workers=2)
-
-    output_dir = "./evaluation_output"
-    evaluate_analysis(model, testloader, device, output_dir=output_dir)
-
-    print(f"Evaluation complete. Results saved in {output_dir}")
-
-#if __name__ == "__main__": eval_main()
+        torch.save(best_weights, f"models/apvit_{num_patches}.pth")
 
 if __name__ == "__main__": main()
