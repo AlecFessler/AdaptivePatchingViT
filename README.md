@@ -2,7 +2,7 @@
 
 ## Overview
 
-This repository presents an implementation of Adaptive Patching for Vision Transformers (APViT), a novel mechanism that enhances the standard Vision Transformer architecture. APViT utilizes a Spatial Transformer Network (STN) to enable dynamic, content-aware patch selection, allowing the model to focus on the most informative regions of an image. The key innovation lies in applying the STN for adaptive patch sampling in the context of Vision Transformers. The module can be trained end-to-end as STNs enable differentiable spatial transformations. The repository includes the implementation of the Adaptive Patching module and an interpolation function for positional embeddings, which can be easily integrated into existing Vision Transformer implementations.
+This repository presents an implementation of Adaptive Patching for Vision Transformers (APViT), a mechanism that enhances the standard Vision Transformer architecture with greater flexibility. APViT utilizes a Spatial Transformer Network (STN) to enable dynamic, content-aware patch selection, allowing the model to focus on the most informative regions of an image. The key innovation lies in applying the STN for adaptive patch sampling in the context of Vision Transformers. The module can be trained end-to-end as STNs enable differentiable spatial transformations. The repository includes the implementation of the Adaptive Patching module and an interpolation function for positional embeddings, which can be easily integrated into existing Vision Transformer implementations.
 
 Importantly, APViT is designed as a drop-in enhancement for existing Vision Transformer architectures, requiring only two additions:
 1. An Adaptive Patching layer for dynamic patch selection
